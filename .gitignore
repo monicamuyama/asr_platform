@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local databases and env
+*.db
+.env
+
+# Node / Next.js
+ui/node_modules/
+ui/.next/
+ui/out/
+
+# Editor/OS
+.vscode/
+.DS_Store
