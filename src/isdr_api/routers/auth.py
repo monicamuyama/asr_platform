@@ -34,9 +34,11 @@ from isdr_api.schemas_extended import (
     RegionSchema,
     SignupResponseSchema,
     UserLoginRequest,
+    UserUpdateRequest,
     SpeechConditionSchema,
     UserDemographicsSchema,
     UserLanguagePreferenceSchema,
+    UserProfileUpdateRequest,
     UserProfileSchema,
     UserSchema,
     UserSpeechConditionSchema,
@@ -199,6 +201,7 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
         password_hash=hash_password(payload.password),
         auth_provider="local",
         is_verified=False,
+        onboarding_completed=False,
         role="contributor",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -412,6 +415,31 @@ def get_user(user_id: str, db: Session = Depends(get_db)) -> User:
     return user
 
 
+@router.patch("/users/{user_id}", response_model=UserSchema)
+def update_user(user_id: str, payload: UserUpdateRequest, db: Session = Depends(get_db)) -> User:
+    """Update user account fields."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.email and payload.email != user.email:
+        email_exists = db.query(User).filter(User.email == payload.email).first()
+        if email_exists:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        user.email = payload.email
+
+    if payload.full_name:
+        user.full_name = payload.full_name
+
+    if payload.onboarding_completed is not None:
+        user.onboarding_completed = payload.onboarding_completed
+
+    user.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 @router.get("/users/{user_id}/profile", response_model=UserProfileSchema)
 def get_user_profile(user_id: str, db: Session = Depends(get_db)) -> UserProfile:
     """Get user profile."""
@@ -422,6 +450,58 @@ def get_user_profile(user_id: str, db: Session = Depends(get_db)) -> UserProfile
     )
     if not profile:
         raise HTTPException(status_code=404, detail="User profile not found")
+    return profile
+
+
+@router.patch("/users/{user_id}/profile", response_model=UserProfileSchema)
+def update_user_profile(
+    user_id: str,
+    payload: UserProfileUpdateRequest,
+    db: Session = Depends(get_db),
+) -> UserProfile:
+    """Update user profile fields for settings and onboarding."""
+    profile = (
+        db.query(UserProfile)
+        .filter(UserProfile.user_id == user_id)
+        .first()
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="User profile not found")
+
+    if payload.country is not None:
+        profile.country = payload.country
+    if payload.primary_language is not None:
+        profile.primary_language = payload.primary_language
+    if payload.preferred_contribution_type is not None:
+        profile.preferred_contribution_type = payload.preferred_contribution_type
+    if payload.bio is not None:
+        profile.bio = payload.bio
+    if payload.profile_photo_url is not None:
+        profile.profile_photo_url = payload.profile_photo_url
+
+    final_has_impairment = profile.has_speech_impairment
+    if payload.has_speech_impairment is not None:
+        final_has_impairment = payload.has_speech_impairment
+        profile.has_speech_impairment = payload.has_speech_impairment
+
+    if payload.impairment_type is not None:
+        profile.impairment_type = payload.impairment_type
+
+    if final_has_impairment and not profile.impairment_type:
+        raise HTTPException(status_code=400, detail="impairment_type is required when has_speech_impairment is true")
+
+    if not final_has_impairment:
+        profile.impairment_type = None
+
+    if payload.can_read_sentences is not None:
+        profile.can_read_sentences = payload.can_read_sentences
+    else:
+        profile.can_read_sentences = not final_has_impairment
+
+    profile.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(profile)
     return profile
 
 

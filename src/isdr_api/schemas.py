@@ -36,6 +36,8 @@ class SubmissionCreate(BaseModel):
     mode: Literal["prompted", "recording", "read_out", "spontaneous_image"]
     speaker_profile: str = Field(min_length=1)
     consent_version: str = Field(min_length=1)
+    audio_url: Optional[str] = None
+    cid: Optional[str] = None
     target_word: Optional[str] = None
     read_prompt: Optional[str] = None
     image_prompt_url: Optional[str] = None
@@ -67,6 +69,8 @@ class SubmissionSchema(BaseModel):
     mode: str
     speaker_profile: str
     consent_version: str
+    audio_url: Optional[str] = None
+    cid: Optional[str] = None
     target_word: Optional[str] = None
     read_prompt: Optional[str] = None
     image_prompt_url: Optional[str] = None

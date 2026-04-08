@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -9,11 +10,20 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import Link from 'next/link'
 import { Heart, Globe, Users, TrendingUp, ArrowLeft, Check } from 'lucide-react'
+import { getSessionUserId } from '@/lib/auth'
 
 export default function DonatePage() {
+  const router = useRouter()
   const [donationType, setDonationType] = useState('one-time')
   const [selectedAmount, setSelectedAmount] = useState(25)
   const [customAmount, setCustomAmount] = useState('')
+
+  useEffect(() => {
+    const userId = getSessionUserId()
+    if (!userId) {
+      router.replace('/signin')
+    }
+  }, [router])
 
   const donations = [10, 25, 50, 100, 250]
 

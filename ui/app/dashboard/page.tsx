@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -11,38 +12,304 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Mic, Headphones, FileText, Trophy, Play, Pause, Volume2, Star, LogOut, Settings, TrendingUp, Users } from 'lucide-react'
 import Link from 'next/link'
+import {
+  createCommunityRating,
+  createSubmission,
+  getCommunityQueue,
+  getConsentDocuments,
+  getLanguages,
+  getUserById,
+  getUserLanguagePreferencesById,
+  getUserProfileById,
+  getUserWalletById,
+  type CommunityQueueItem,
+  type ConsentDocument,
+  type Language,
+  type UserLanguagePreferenceResponse,
+  type UserProfileResponse,
+  type UserResponse,
+  type WalletResponse,
+} from '@/lib/api'
+import { clearSession, getSessionUserId } from '@/lib/auth'
 
 export default function CorpusWeaveDashboard() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [recordingError, setRecordingError] = useState('')
+  const [submissionMessage, setSubmissionMessage] = useState('')
+  const [validationMessage, setValidationMessage] = useState('')
+  const [user, setUser] = useState<UserResponse | null>(null)
+  const [profile, setProfile] = useState<UserProfileResponse | null>(null)
+  const [wallet, setWallet] = useState<WalletResponse | null>(null)
+  const [languagePreferences, setLanguagePreferences] = useState<UserLanguagePreferenceResponse[]>([])
+  const [languages, setLanguages] = useState<Language[]>([])
+  const [consents, setConsents] = useState<ConsentDocument[]>([])
+  const [communityQueue, setCommunityQueue] = useState<CommunityQueueItem[]>([])
+  const [selectedQueueSubmissionId, setSelectedQueueSubmissionId] = useState('')
+  const [selectedRating, setSelectedRating] = useState(3)
+  const [validationScores, setValidationScores] = useState({
+    intelligibility: 3,
+    recordingQuality: 3,
+    compliance: 3,
+  })
   const [isRecording, setIsRecording] = useState(false)
-  const [selectedRating, setSelectedRating] = useState(0)
-  const [userName] = useState('Amara')
-  const [userLanguage] = useState('Luganda')
+  const [isSubmittingRecording, setIsSubmittingRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
+  const [recordedAudioDataUrl, setRecordedAudioDataUrl] = useState<string | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const recordedChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<number | null>(null)
 
-  const userStats = [
-    { label: 'Recordings', value: '24', icon: Mic },
-    { label: 'Validations', value: '156', icon: Headphones },
-    { label: 'Transcriptions', value: '42', icon: FileText },
-    { label: 'Points Earned', value: '2,450', icon: Trophy },
-  ]
+  useEffect(() => {
+    const userId = getSessionUserId()
+    if (!userId) {
+      router.replace('/signin')
+      return
+    }
 
-  const activeTasks = [
-    { id: 1, type: 'record', title: 'Record: "Please repeat after me"', language: 'Luganda', reward: '50 pts' },
-    { id: 2, type: 'validate', title: 'Validate 5 recordings', language: 'English', reward: '125 pts' },
-    { id: 3, type: 'transcribe', title: 'Transcribe Acholi audio', language: 'Acholi', reward: '200 pts' },
-  ]
+    const loadDashboardData = async () => {
+      setIsLoading(true)
+      setError('')
+      try {
+        const [userData, profileData, walletData, languagePrefData, languageData, consentData, queueData] = await Promise.all([
+          getUserById(userId),
+          getUserProfileById(userId),
+          getUserWalletById(userId),
+          getUserLanguagePreferencesById(userId),
+          getLanguages(),
+          getConsentDocuments(),
+          getCommunityQueue(),
+        ])
+        if (!userData.onboarding_completed) {
+          router.replace('/onboarding')
+          return
+        }
+        setUser(userData)
+        setProfile(profileData)
+        setWallet(walletData)
+        setLanguagePreferences(languagePrefData)
+        setLanguages(languageData)
+        setConsents(consentData)
+        setCommunityQueue(queueData)
+        setSelectedQueueSubmissionId((current) => current || queueData[0]?.id || '')
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to load your dashboard from backend.'
+        const shouldResetSession = /user not found|invalid|unauthorized|forbidden|401|403/i.test(message)
+        if (shouldResetSession) {
+          clearSession()
+          router.replace('/signin')
+          return
+        }
+        setError(message)
+      } finally {
+        setIsLoading(false)
+      }
+    }
 
-  const recentActivity = [
-    { date: 'Today', action: 'Completed 3 recordings', reward: '+150 pts' },
-    { date: 'Yesterday', action: 'Validated 5 submissions', reward: '+125 pts' },
-    { date: '2 days ago', action: 'Received bonus points', reward: '+500 pts' },
-  ]
+    void loadDashboardData()
+  }, [router])
 
-  const topContributors = [
-    { name: 'Juma Mukwaya', points: '24,500', recordings: 342, rating: 4.9 },
-    { name: 'Grace Nabwire', points: '21,200', recordings: 298, rating: 4.8 },
-    { name: 'Kofi Osei', points: '18,900', recordings: 267, rating: 4.7 },
-  ]
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        window.clearInterval(recordingTimerRef.current)
+      }
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+      if (recordedAudioUrl) {
+        window.URL.revokeObjectURL(recordedAudioUrl)
+      }
+    }
+  }, [recordedAudioUrl])
+
+  const userName = useMemo(() => {
+    if (!user?.full_name) {
+      return 'Contributor'
+    }
+    return user.full_name.split(' ')[0] ?? user.full_name
+  }, [user])
+
+  const userLanguage = profile?.primary_language ?? 'Not set'
+  const recordPrompt = 'The future is built by those who contribute today.'
+  const activeConsentVersion = consents.find((document) => document.is_active)?.version ?? consents[0]?.version ?? 'v1.0'
+  const primaryLanguagePreference =
+    languagePreferences.find((preference) => preference.is_primary_language)
+    ?? languagePreferences[0]
+    ?? null
+  const primaryLanguageInfo =
+    languages.find((language) => language.id === primaryLanguagePreference?.language_id)
+    ?? languages.find((language) => language.language_name === userLanguage)
+    ?? null
+  const selectedValidationSubmission = communityQueue.find((item) => item.id === selectedQueueSubmissionId) ?? communityQueue[0] ?? null
+  const speakerProfile = profile?.has_speech_impairment
+    ? profile.impairment_type ?? 'speech_impairment'
+    : 'healthy_speaker'
+  const userId = getSessionUserId()
+
+  const userStats = useMemo(
+    () => [
+      { label: 'Recordings', value: '-', icon: Mic },
+      { label: 'Validations', value: '-', icon: Headphones },
+      { label: 'Transcriptions', value: '-', icon: FileText },
+      { label: 'Points Earned', value: wallet ? wallet.balance.toFixed(2) : '0.00', icon: Trophy },
+    ],
+    [wallet],
+  )
+
+  const activeTasks: Array<{ id: number; type: string; title: string; language: string; reward: string }> = []
+  const recentActivity: Array<{ date: string; action: string; reward: string }> = []
+  const topContributors: Array<{ name: string; points: string; recordings: number; rating: number }> = []
+
+  const handleSignOut = () => {
+    clearSession()
+    router.push('/signin')
+  }
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop()
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+    mediaStreamRef.current = null
+    mediaRecorderRef.current = null
+    setIsRecording(false)
+    if (recordingTimerRef.current) {
+      window.clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+  }
+
+  const startRecording = async () => {
+    setRecordingError('')
+    setSubmissionMessage('')
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setRecordingError('Your browser does not support microphone recording.')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      const chunks: Blob[] = []
+      recordedChunksRef.current = chunks
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data)
+        }
+      }
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
+        const objectUrl = window.URL.createObjectURL(blob)
+        setRecordedAudioUrl(objectUrl)
+
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setRecordedAudioDataUrl(typeof reader.result === 'string' ? reader.result : null)
+        }
+        reader.readAsDataURL(blob)
+      }
+
+      mediaRecorderRef.current = recorder
+      mediaStreamRef.current = stream
+      setRecordedAudioUrl(null)
+      setRecordedAudioDataUrl(null)
+      setRecordingDuration(0)
+      setIsRecording(true)
+
+      recorder.start()
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingDuration((current) => current + 1)
+      }, 1000)
+    } catch (err) {
+      setRecordingError(err instanceof Error ? err.message : 'Unable to access the microphone.')
+    }
+  }
+
+  const submitRecording = async () => {
+    if (!userId || !primaryLanguageInfo) {
+      setRecordingError('Please sign in and load your language profile first.')
+      return
+    }
+
+    if (!recordedAudioDataUrl) {
+      setRecordingError('Record audio before submitting.')
+      return
+    }
+
+    setIsSubmittingRecording(true)
+    setRecordingError('')
+    setSubmissionMessage('')
+
+    try {
+      const submission = await createSubmission({
+        contributor_id: userId,
+        language_code: primaryLanguageInfo.iso_code,
+        mode: 'recording',
+        speaker_profile: speakerProfile,
+        consent_version: activeConsentVersion,
+        audio_url: recordedAudioDataUrl,
+        target_word: recordPrompt,
+        read_prompt: recordPrompt,
+      })
+
+      setSubmissionMessage(`Recording submitted as ${submission.id}`)
+      setCommunityQueue((current) => [
+        {
+          id: submission.id,
+          contributor_id: submission.contributor_id,
+          language_code: submission.language_code,
+          mode: submission.mode,
+          speaker_profile: submission.speaker_profile,
+          status: submission.status,
+          ratings_count: 0,
+        },
+        ...current,
+      ])
+      setSelectedQueueSubmissionId(submission.id)
+      stopRecording()
+      setRecordedAudioUrl(null)
+      setRecordedAudioDataUrl(null)
+      setRecordingDuration(0)
+    } catch (err) {
+      setRecordingError(err instanceof Error ? err.message : 'Failed to submit recording.')
+    } finally {
+      setIsSubmittingRecording(false)
+    }
+  }
+
+  const submitValidation = async () => {
+    if (!userId || !selectedValidationSubmission) {
+      setValidationMessage('Load a community submission first.')
+      return
+    }
+
+    setValidationMessage('')
+
+    try {
+      const result = await createCommunityRating(selectedValidationSubmission.id, {
+        submission_id: selectedValidationSubmission.id,
+        rater_id: userId,
+        intelligibility: validationScores.intelligibility,
+        recording_quality: validationScores.recordingQuality,
+        elicitation_compliance: validationScores.compliance,
+      })
+
+      setValidationMessage(`Saved rating. Submission is now ${result.status}.`)
+      setCommunityQueue((current) => current.filter((item) => item.id !== selectedValidationSubmission.id))
+      setSelectedQueueSubmissionId('')
+      setSelectedRating(validationScores.intelligibility)
+    } catch (err) {
+      setValidationMessage(err instanceof Error ? err.message : 'Failed to submit rating.')
+    }
+  }
+
+  if (isLoading) {
+    return <div className="min-h-screen bg-background" />
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -75,7 +342,7 @@ export default function CorpusWeaveDashboard() {
                   <Settings className="h-4 w-4" />
                 </Button>
               </Link>
-              <Button size="sm" variant="ghost" className="gap-1">
+              <Button size="sm" variant="ghost" className="gap-1" onClick={handleSignOut}>
                 <LogOut className="h-4 w-4" />
               </Button>
             </div>
@@ -84,6 +351,7 @@ export default function CorpusWeaveDashboard() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
         {/* Tabs Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-4 mb-8">
@@ -126,6 +394,13 @@ export default function CorpusWeaveDashboard() {
             <div className="space-y-4">
               <h3 className="text-xl font-semibold text-foreground">Your Active Tasks</h3>
               <div className="grid gap-4 md:grid-cols-3">
+                {activeTasks.length === 0 && (
+                  <Card className="border-border md:col-span-3">
+                    <CardContent className="p-6 text-sm text-muted-foreground">
+                      No active tasks are available from the backend yet.
+                    </CardContent>
+                  </Card>
+                )}
                 {activeTasks.map(task => (
                   <Card key={task.id} className="border-border hover:shadow-md transition">
                     <CardContent className="p-6">
@@ -152,6 +427,9 @@ export default function CorpusWeaveDashboard() {
               <Card className="border-border">
                 <CardContent className="p-6">
                   <div className="space-y-3">
+                    {recentActivity.length === 0 && (
+                      <p className="text-sm text-muted-foreground">No recent activity available yet.</p>
+                    )}
                     {recentActivity.map((activity, idx) => (
                       <div key={idx} className="flex items-center justify-between pb-3 border-b border-border last:border-0">
                         <div>
@@ -182,11 +460,16 @@ export default function CorpusWeaveDashboard() {
                   <div className="bg-muted/50 rounded-xl p-6 text-center space-y-4">
                     <p className="font-medium text-foreground">Sentence to record:</p>
                     <p className="text-lg text-foreground italic">
-                      "The future is built by those who contribute today."
+                      "{recordPrompt}"
                     </p>
                   </div>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{primaryLanguageInfo?.language_name ?? userLanguage}</span>
+                    <span>{recordingDuration}s</span>
+                  </div>
                   <Button 
-                    onClick={() => setIsRecording(!isRecording)}
+                    type="button"
+                    onClick={isRecording ? stopRecording : startRecording}
                     className={`w-full ${isRecording ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'}`}
                   >
                     {isRecording ? (
@@ -201,13 +484,25 @@ export default function CorpusWeaveDashboard() {
                       </>
                     )}
                   </Button>
-                  {!isRecording && (
+                  {recordedAudioUrl && (
+                    <audio controls className="w-full" src={recordedAudioUrl} />
+                  )}
+                  {!isRecording && !recordedAudioUrl && (
                     <Button variant="outline" className="w-full border-border">
                       <Play className="h-4 w-4 mr-2" />
                       Playback
                     </Button>
                   )}
-                  <Button className="w-full bg-primary hover:bg-primary/90">Submit Recording</Button>
+                  <Button
+                    type="button"
+                    className="w-full bg-primary hover:bg-primary/90"
+                    onClick={submitRecording}
+                    disabled={isSubmittingRecording || !recordedAudioDataUrl}
+                  >
+                    {isSubmittingRecording ? 'Submitting...' : 'Submit Recording'}
+                  </Button>
+                  {recordingError && <p className="text-sm text-red-600">{recordingError}</p>}
+                  {submissionMessage && <p className="text-sm text-foreground">{submissionMessage}</p>}
                 </CardContent>
               </Card>
 
@@ -222,10 +517,26 @@ export default function CorpusWeaveDashboard() {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Submission ID</Label>
-                    <Input placeholder="Enter submission ID..." className="border-border" />
+                    <Select value={selectedQueueSubmissionId} onValueChange={setSelectedQueueSubmissionId}>
+                      <SelectTrigger className="border-border">
+                        <SelectValue placeholder="Select a submission" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {communityQueue.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.language_code} · {item.mode} · {item.id.slice(0, 8)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="bg-muted/50 rounded-xl p-4 flex items-center justify-center">
-                    <Play className="h-8 w-8 text-primary" />
+                    <div className="text-center">
+                      <Play className="h-8 w-8 text-primary mx-auto" />
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {selectedValidationSubmission ? `${selectedValidationSubmission.status} · ${selectedValidationSubmission.ratings_count} ratings` : 'No queue items available'}
+                      </p>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Quality Rating</Label>
@@ -233,7 +544,11 @@ export default function CorpusWeaveDashboard() {
                       {[1, 2, 3, 4, 5].map(star => (
                         <button 
                           key={star}
-                          onClick={() => setSelectedRating(star)}
+                          type="button"
+                          onClick={() => {
+                            setSelectedRating(star)
+                            setValidationScores({ intelligibility: star, recordingQuality: star, compliance: star })
+                          }}
                           className={`text-3xl transition ${selectedRating >= star ? 'text-yellow-500' : 'text-muted-foreground'}`}
                         >
                           ★
@@ -241,7 +556,10 @@ export default function CorpusWeaveDashboard() {
                       ))}
                     </div>
                   </div>
-                  <Button variant="outline" className="w-full border-border">Submit Rating</Button>
+                  <Button variant="outline" className="w-full border-border" type="button" onClick={submitValidation} disabled={!selectedValidationSubmission}>
+                    Submit Rating
+                  </Button>
+                  {validationMessage && <p className="text-sm text-foreground">{validationMessage}</p>}
                 </CardContent>
               </Card>
 
@@ -261,12 +579,14 @@ export default function CorpusWeaveDashboard() {
                     <Label htmlFor="transcription" className="text-sm font-medium">Your Transcription</Label>
                     <Textarea 
                       id="transcription"
-                      placeholder="Type what you hear in the audio..." 
+                      placeholder="Transcription pipeline is not exposed yet." 
                       className="border-border resize-none" 
                       rows={4}
+                      disabled
                     />
                   </div>
-                  <Button className="w-full bg-primary hover:bg-primary/90">Submit Transcription</Button>
+                  <Button className="w-full bg-primary hover:bg-primary/90" disabled>Submit Transcription</Button>
+                  <p className="text-xs text-muted-foreground">The backend does not expose transcription endpoints yet.</p>
                 </CardContent>
               </Card>
             </div>
@@ -285,7 +605,7 @@ export default function CorpusWeaveDashboard() {
                 <CardContent className="space-y-6">
                   <div className="bg-gradient-to-r from-primary/10 to-accent-teal/10 rounded-xl p-6 border border-primary/20">
                     <p className="text-sm text-muted-foreground mb-2">Total Points Balance</p>
-                    <p className="text-4xl font-bold text-foreground">2,450</p>
+                    <p className="text-4xl font-bold text-foreground">{wallet ? wallet.balance.toFixed(2) : '0.00'}</p>
                     <p className="text-sm text-muted-foreground mt-4">Unlock rewards at 5,000 points</p>
                   </div>
                   <div className="space-y-2">
@@ -304,15 +624,10 @@ export default function CorpusWeaveDashboard() {
                   <CardDescription>Reward other contributors</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <Select>
+                  <Select disabled>
                     <SelectTrigger className="border-border">
-                      <SelectValue placeholder="Select contributor..." />
+                      <SelectValue placeholder="Contributor tipping endpoint not wired yet" />
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="juma">Juma Mukwaya</SelectItem>
-                      <SelectItem value="grace">Grace Nabwire</SelectItem>
-                      <SelectItem value="kofi">Kofi Osei</SelectItem>
-                    </SelectContent>
                   </Select>
                   <div className="grid grid-cols-2 gap-2">
                     {[10, 50, 100, 250].map(amount => (
@@ -333,14 +648,17 @@ export default function CorpusWeaveDashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="grid gap-4 md:grid-cols-3">
-                    {['Luganda', 'Acholi', 'English'].map(lang => (
+                    {(languagePreferences.length > 0 ? [userLanguage] : []).map(lang => (
                       <div key={lang} className="border border-border rounded-lg p-4">
                         <p className="font-semibold text-foreground">{lang}</p>
-                        <p className="text-2xl font-bold text-primary mt-2">52,400 pts</p>
-                        <p className="text-sm text-muted-foreground mt-1">Total awarded</p>
+                        <p className="text-2xl font-bold text-primary mt-2">{wallet ? wallet.balance.toFixed(2) : '0.00'} pts</p>
+                        <p className="text-sm text-muted-foreground mt-1">Your current balance</p>
                         <Button size="sm" className="w-full mt-4 bg-primary hover:bg-primary/90">View Rankings</Button>
                       </div>
                     ))}
+                    {languagePreferences.length === 0 && (
+                      <p className="text-sm text-muted-foreground md:col-span-3">No leaderboard data available from backend yet.</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -359,6 +677,9 @@ export default function CorpusWeaveDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
+                  {topContributors.length === 0 && (
+                    <p className="text-sm text-muted-foreground">Top contributors feed is not available from the backend yet.</p>
+                  )}
                   {topContributors.map((contributor, idx) => (
                     <div key={idx} className="flex items-center gap-4 pb-4 border-b border-border last:border-0">
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">

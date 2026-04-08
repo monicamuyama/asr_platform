@@ -5,10 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import Link from 'next/link'
-import { Mail, Lock, User, Globe, ArrowLeft, CheckCircle } from 'lucide-react'
-import { API_BASE, type ConsentDocument, type Country, type Language } from '@/lib/api'
+import { Mail, Lock, User, ArrowLeft, CheckCircle } from 'lucide-react'
+import { API_BASE, type ConsentDocument, type Country, type Language, type SpeechCondition } from '@/lib/api'
+import { setSessionUserId } from '@/lib/auth'
 
 export default function SignUpPage() {
   const [step, setStep] = useState(1)
@@ -18,36 +20,45 @@ export default function SignUpPage() {
     password: '',
     languageId: '',
     countryId: '',
+    hasSpeechImpairment: false,
+    speechConditionId: '',
+    speechConditionSeverity: 'mild',
+    speechConditionNotes: '',
+    speechConditionResearchConsent: false,
   })
   const [countries, setCountries] = useState<Country[]>([])
   const [languages, setLanguages] = useState<Language[]>([])
   const [consents, setConsents] = useState<ConsentDocument[]>([])
-  const [acceptRequiredConsents, setAcceptRequiredConsents] = useState(true)
+  const [speechConditions, setSpeechConditions] = useState<SpeechCondition[]>([])
+  const [acceptedConsentIds, setAcceptedConsentIds] = useState<string[]>([])
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
     const loadReferenceData = async () => {
       try {
-        const [countryRes, langRes, consentRes] = await Promise.all([
+        const [countryRes, langRes, consentRes, conditionRes] = await Promise.all([
           fetch(`${API_BASE}/auth/countries`),
           fetch(`${API_BASE}/auth/languages`),
           fetch(`${API_BASE}/auth/consent-documents`),
+          fetch(`${API_BASE}/auth/speech-conditions`),
         ])
 
-        if (!countryRes.ok || !langRes.ok || !consentRes.ok) {
+        if (!countryRes.ok || !langRes.ok || !consentRes.ok || !conditionRes.ok) {
           throw new Error('Failed to load reference data from backend')
         }
 
-        const [countryData, langData, consentData] = await Promise.all([
+        const [countryData, langData, consentData, conditionData] = await Promise.all([
           countryRes.json() as Promise<Country[]>,
           langRes.json() as Promise<Language[]>,
           consentRes.json() as Promise<ConsentDocument[]>,
+          conditionRes.json() as Promise<SpeechCondition[]>,
         ])
 
         setCountries(countryData)
         setLanguages(langData)
         setConsents(consentData)
+        setSpeechConditions(conditionData)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to reach backend API')
       }
@@ -61,6 +72,11 @@ export default function SignUpPage() {
     [countries, formData.countryId],
   )
 
+  const selectedSpeechCondition = useMemo(
+    () => speechConditions.find((condition) => condition.id === formData.speechConditionId) ?? null,
+    [speechConditions, formData.speechConditionId],
+  )
+
   const selectedLanguage = useMemo(
     () => languages.find((language) => language.id === formData.languageId) ?? null,
     [languages, formData.languageId],
@@ -70,18 +86,49 @@ export default function SignUpPage() {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 
-  const handleNext = () => {
-    if (step < 3) {
-      setStep(step + 1)
+  const toggleConsent = (documentId: string, accepted: boolean) => {
+    setAcceptedConsentIds((current) => {
+      if (accepted) {
+        return current.includes(documentId) ? current : [...current, documentId]
+      }
+      return current.filter((id) => id !== documentId)
+    })
+  }
+
+  const handleNext = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+
+    if (!formData.name.trim() || !formData.email.trim() || !formData.password) {
+      setError('Please complete name, email, and password to continue.')
+      return
     }
+
+    if (!formData.email.includes('@')) {
+      setError('Please enter a valid email address.')
+      return
+    }
+
+    setStep(2)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
-    if (!acceptRequiredConsents) {
-      setError('You must agree to all required consent documents.')
+    const acceptedConsentCount = acceptedConsentIds.length
+    if (acceptedConsentCount !== consents.length) {
+      setError('You must accept every required consent document to continue.')
+      return
+    }
+
+    if (formData.hasSpeechImpairment && !selectedSpeechCondition) {
+      setError('Please choose your speech condition before continuing.')
+      return
+    }
+
+    if (formData.hasSpeechImpairment && !formData.speechConditionResearchConsent) {
+      setError('Please confirm whether you are willing to be contacted for speech research.')
       return
     }
 
@@ -103,15 +150,17 @@ export default function SignUpPage() {
           email: formData.email,
           password: formData.password,
           phone_number: null,
-          consents: consents.map((document) => ({
+          consents: consents
+            .filter((document) => acceptedConsentIds.includes(document.id))
+            .map((document) => ({
             document_id: document.id,
             agreed: true,
-          })),
+            })),
           country: selectedCountry.country_name,
           primary_language: selectedLanguage.language_name,
           preferred_contribution_type: 'recording',
-          has_speech_impairment: false,
-          impairment_type: null,
+          has_speech_impairment: formData.hasSpeechImpairment,
+          impairment_type: formData.hasSpeechImpairment ? selectedSpeechCondition?.condition_name ?? null : null,
           bio: null,
           age_range: null,
           gender: null,
@@ -120,7 +169,17 @@ export default function SignUpPage() {
           district: null,
           native_language_id: selectedLanguage.id,
           education_level: null,
-          speech_conditions: [],
+          speech_conditions:
+            formData.hasSpeechImpairment && selectedSpeechCondition
+              ? [
+                  {
+                    condition_id: selectedSpeechCondition.id,
+                    severity_level: formData.speechConditionSeverity as 'mild' | 'moderate' | 'severe',
+                    is_willing_to_contribute_for_research: formData.speechConditionResearchConsent,
+                    notes: formData.speechConditionNotes.trim() || null,
+                  },
+                ]
+              : [],
           language_preferences: [
             {
               language_id: selectedLanguage.id,
@@ -142,7 +201,7 @@ export default function SignUpPage() {
 
       const payload = (await response.json()) as { user?: { id?: string } }
       if (payload.user?.id) {
-        localStorage.setItem('isdr_user_id', payload.user.id)
+        setSessionUserId(payload.user.id)
       }
 
       setStep(3)
@@ -155,7 +214,7 @@ export default function SignUpPage() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-xl">
         <div className="mb-8">
           <Link href="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition mb-8">
             <ArrowLeft className="h-4 w-4" />
@@ -190,7 +249,7 @@ export default function SignUpPage() {
                 <CardDescription>Step 1 of 2: Basic Information</CardDescription>
               </CardHeader>
               <CardContent>
-                <form className="space-y-4">
+                <form onSubmit={handleNext} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="name" className="text-sm font-medium">Full Name</Label>
                     <div className="relative">
@@ -240,13 +299,13 @@ export default function SignUpPage() {
                   </div>
 
                   <Button 
-                    type="button"
-                    onClick={handleNext}
-                    disabled={!formData.name || !formData.email || formData.password.length < 8}
+                    type="submit"
                     className="w-full bg-primary hover:bg-primary/90 mt-6"
                   >
                     Next
                   </Button>
+
+                  {error && <p className="text-sm text-red-600">{error}</p>}
                 </form>
               </CardContent>
             </>
@@ -259,50 +318,156 @@ export default function SignUpPage() {
                 <CardDescription>Step 2 of 2: Tell us about yourself</CardDescription>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="language" className="text-sm font-medium">Primary Language</Label>
-                    <Select value={formData.languageId} onValueChange={(value) => handleInputChange('languageId', value)}>
-                      <SelectTrigger className="border-border">
-                        <SelectValue placeholder="Select a language" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {languages.map((language) => (
-                          <SelectItem key={language.id} value={language.id}>{language.language_name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <form onSubmit={handleSubmit} className="space-y-6">
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="language" className="text-sm font-medium">Primary Language</Label>
+                      <Select value={formData.languageId} onValueChange={(value) => handleInputChange('languageId', value)}>
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select a language" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {languages.map((language) => (
+                            <SelectItem key={language.id} value={language.id}>{language.language_name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="country" className="text-sm font-medium">Country</Label>
+                      <Select value={formData.countryId} onValueChange={(value) => handleInputChange('countryId', value)}>
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select a country" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {countries.map((country) => (
+                            <SelectItem key={country.id} value={country.id}>{country.country_name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="country" className="text-sm font-medium">Country</Label>
-                    <Select value={formData.countryId} onValueChange={(value) => handleInputChange('countryId', value)}>
-                      <SelectTrigger className="border-border">
-                        <SelectValue placeholder="Select a country" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {countries.map((country) => (
-                          <SelectItem key={country.id} value={country.id}>{country.country_name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="speech-impairment" className="text-sm font-medium">Speech Impairment</Label>
+                      <Select
+                        value={formData.hasSpeechImpairment ? 'yes' : 'no'}
+                        onValueChange={(value) => {
+                          const hasImpairment = value === 'yes'
+                          setFormData((prev) => ({
+                            ...prev,
+                            hasSpeechImpairment: hasImpairment,
+                            speechConditionId: hasImpairment ? prev.speechConditionId : '',
+                            speechConditionSeverity: hasImpairment ? prev.speechConditionSeverity : 'mild',
+                            speechConditionNotes: hasImpairment ? prev.speechConditionNotes : '',
+                            speechConditionResearchConsent: hasImpairment ? prev.speechConditionResearchConsent : false,
+                          }))
+                        }}
+                      >
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select an option" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="no">No speech impairment</SelectItem>
+                          <SelectItem value="yes">Yes, I have a speech impairment</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {formData.hasSpeechImpairment && (
+                      <>
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="speech-condition" className="text-sm font-medium">Condition</Label>
+                            <Select value={formData.speechConditionId} onValueChange={(value) => handleInputChange('speechConditionId', value)}>
+                              <SelectTrigger className="border-border">
+                                <SelectValue placeholder="Select your condition" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {speechConditions.map((condition) => (
+                                  <SelectItem key={condition.id} value={condition.id}>
+                                    {condition.condition_name.replace('_', ' ')}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="severity" className="text-sm font-medium">Severity</Label>
+                            <Select
+                              value={formData.speechConditionSeverity}
+                              onValueChange={(value) => handleInputChange('speechConditionSeverity', value)}
+                            >
+                              <SelectTrigger className="border-border">
+                                <SelectValue placeholder="Select severity" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="mild">Mild</SelectItem>
+                                <SelectItem value="moderate">Moderate</SelectItem>
+                                <SelectItem value="severe">Severe</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="research-consent" className="text-sm font-medium">Research Contact</Label>
+                          <label className="flex items-start gap-3 rounded-lg border border-border bg-background p-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="mt-1"
+                              checked={formData.speechConditionResearchConsent}
+                              onChange={(e) => setFormData((prev) => ({ ...prev, speechConditionResearchConsent: e.target.checked }))}
+                            />
+                            <span className="text-sm text-muted-foreground">
+                              I am willing to be contacted about speech impairment research opportunities.
+                            </span>
+                          </label>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="notes" className="text-sm font-medium">Notes</Label>
+                          <Textarea
+                            id="notes"
+                            placeholder="Optional details that may help us understand your needs"
+                            value={formData.speechConditionNotes}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, speechConditionNotes: e.target.value }))}
+                            className="border-border"
+                            rows={3}
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
 
-                  <div className="space-y-3 my-6 p-4 rounded-lg bg-muted/50 border border-border">
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={acceptRequiredConsents}
-                        onChange={(e) => setAcceptRequiredConsents(e.target.checked)}
-                      />
-                      <span className="text-sm">I agree to all required consent documents ({consents.length})</span>
-                    </label>
+                  <div className="space-y-3 my-6 rounded-lg bg-muted/50 border border-border p-4">
+                    <div className="space-y-3">
+                      {consents.map((document) => (
+                        <label key={document.id} className="flex items-start gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={acceptedConsentIds.includes(document.id)}
+                            onChange={(e) => toggleConsent(document.id, e.target.checked)}
+                          />
+                          <span className="text-sm text-foreground">
+                            I agree to{' '}
+                            <Link href={document.document_url} className="font-medium text-primary hover:underline" target={document.document_url.startsWith('http') ? '_blank' : undefined} rel={document.document_url.startsWith('http') ? 'noreferrer' : undefined}>
+                              {document.title}
+                            </Link>
+                            {document.version ? ` (${document.version})` : ''}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
 
                   {error && <p className="text-sm text-red-600">{error}</p>}
 
-                  <div className="flex gap-3">
+                  <div className="flex flex-col-reverse gap-3 sm:flex-row">
                     <Button 
                       type="button"
                       variant="outline"
@@ -314,7 +479,7 @@ export default function SignUpPage() {
                     <Button 
                       type="submit"
                       className="flex-1 bg-primary hover:bg-primary/90"
-                      disabled={isLoading || !formData.languageId || !formData.countryId || consents.length === 0}
+                      disabled={isLoading}
                     >
                       {isLoading ? 'Creating...' : 'Create Account'}
                     </Button>
@@ -353,10 +518,10 @@ export default function SignUpPage() {
                 </div>
 
                 <Button 
-                  onClick={() => window.location.href = '/'}
+                  onClick={() => window.location.href = '/onboarding'}
                   className="w-full bg-primary hover:bg-primary/90"
                 >
-                  Go to Dashboard
+                  Continue to Onboarding
                 </Button>
 
                 <p className="text-center text-xs text-muted-foreground">

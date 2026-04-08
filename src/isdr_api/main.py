@@ -5,13 +5,31 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from isdr_api.database import Base, SessionLocal, engine
 
 
+def _ensure_runtime_schema() -> None:
+    inspector = inspect(engine)
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "onboarding_completed" in user_columns:
+        return
+
+    with engine.begin() as connection:
+        if engine.dialect.name == "sqlite":
+            connection.execute(
+                text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT 0")
+            )
+        else:
+            connection.execute(
+                text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT false")
+            )
+
+
 def _seed_reference_data(db: Session) -> None:
-    from isdr_api.db_models_extended import ConsentDocument, Country, Language
+    from isdr_api.db_models_extended import ConsentDocument, Country, Language, SpeechCondition
 
     uganda = db.query(Country).filter(Country.iso_code == "UG").first()
     if uganda is None:
@@ -44,23 +62,69 @@ def _seed_reference_data(db: Session) -> None:
             ]
         )
 
-    existing_consents = db.query(ConsentDocument).count()
-    if existing_consents == 0:
+    required_consents = {
+        "privacy_policy": {
+            "title": "ISDR Privacy Policy",
+            "version": "v1.0",
+            "document_url": "/privacy-policy",
+        },
+        "research_consent": {
+            "title": "ISDR Research Consent",
+            "version": "v1.0",
+            "document_url": "/research-consent",
+        },
+    }
+
+    for document_type, values in required_consents.items():
+        existing = (
+            db.query(ConsentDocument)
+            .filter(ConsentDocument.document_type == document_type)
+            .first()
+        )
+        if existing:
+            existing.title = values["title"]
+            existing.version = values["version"]
+            existing.document_url = values["document_url"]
+            existing.is_active = True
+        else:
+            db.add(
+                ConsentDocument(
+                    title=values["title"],
+                    document_type=document_type,
+                    version=values["version"],
+                    document_url=values["document_url"],
+                    is_active=True,
+                )
+            )
+
+    existing_speech_conditions = db.query(SpeechCondition).count()
+    if existing_speech_conditions == 0:
         db.add_all(
             [
-                ConsentDocument(
-                    title="ISDR Privacy Policy",
-                    document_type="privacy_policy",
-                    version="v1.0",
-                    document_url="https://example.org/isdr/privacy-policy-v1",
-                    is_active=True,
+                SpeechCondition(
+                    condition_name="stutter",
+                    description="Speech with repetitions, prolongations, or blocks.",
+                    research_notes="Common fluency condition for speaker profiling.",
                 ),
-                ConsentDocument(
-                    title="ISDR Research Consent",
-                    document_type="research_consent",
-                    version="v1.0",
-                    document_url="https://example.org/isdr/research-consent-v1",
-                    is_active=True,
+                SpeechCondition(
+                    condition_name="dysarthria",
+                    description="Speech affected by weakened or poorly coordinated muscles.",
+                    research_notes="Often impacts articulation and intelligibility.",
+                ),
+                SpeechCondition(
+                    condition_name="apraxia",
+                    description="Difficulty planning and sequencing speech movements.",
+                    research_notes="Useful for motor-speech research cohorts.",
+                ),
+                SpeechCondition(
+                    condition_name="voice_disorder",
+                    description="Differences in pitch, loudness, or vocal quality.",
+                    research_notes="May affect phonation stability.",
+                ),
+                SpeechCondition(
+                    condition_name="other",
+                    description="A speech-related condition not listed separately.",
+                    research_notes="Use when a participant needs a catch-all option.",
                 ),
             ]
         )
@@ -74,6 +138,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from isdr_api import db_models_extended  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_runtime_schema()
     db = SessionLocal()
     try:
         _seed_reference_data(db)

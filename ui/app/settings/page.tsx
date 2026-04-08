@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -11,15 +12,147 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import Link from 'next/link'
-import { User, Lock, Bell, DollarSign, Languages, Shield, LogOut, ArrowLeft } from 'lucide-react'
+import { User, Lock, Bell, DollarSign, Shield, LogOut, ArrowLeft } from 'lucide-react'
+import {
+  getLanguages,
+  getUserById,
+  getUserProfileById,
+  getUserWalletById,
+  updateUserById,
+  updateUserProfileById,
+  type Language,
+  type UserProfileResponse,
+  type UserResponse,
+  type WalletResponse,
+} from '@/lib/api'
+import { clearSession, getSessionUserId } from '@/lib/auth'
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState('profile')
   const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [saveMessage, setSaveMessage] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [user, setUser] = useState<UserResponse | null>(null)
+  const [profile, setProfile] = useState<UserProfileResponse | null>(null)
+  const [wallet, setWallet] = useState<WalletResponse | null>(null)
+  const [languages, setLanguages] = useState<Language[]>([])
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    primaryLanguage: '',
+    bio: '',
+    country: '',
+    preferredContributionType: 'recording',
+    hasSpeechImpairment: false,
+    impairmentType: '',
+  })
 
-  const handleSave = () => {
+  useEffect(() => {
+    const userId = getSessionUserId()
+    if (!userId) {
+      router.replace('/signin')
+      return
+    }
+
+    const loadSettingsData = async () => {
+      setIsLoading(true)
+      setError('')
+      setSaveMessage('')
+      try {
+        const [userData, profileData, walletData, languageData] = await Promise.all([
+          getUserById(userId),
+          getUserProfileById(userId),
+          getUserWalletById(userId),
+          getLanguages(),
+        ])
+        setUser(userData)
+        setProfile(profileData)
+        setWallet(walletData)
+        setLanguages(languageData)
+        setFormData({
+          fullName: userData.full_name,
+          email: userData.email,
+          primaryLanguage: profileData.primary_language ?? '',
+          bio: profileData.bio ?? '',
+          country: profileData.country ?? '',
+          preferredContributionType: profileData.preferred_contribution_type ?? 'recording',
+          hasSpeechImpairment: profileData.has_speech_impairment,
+          impairmentType: profileData.impairment_type ?? '',
+        })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to load account settings from backend.')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadSettingsData()
+  }, [router])
+
+  const handleSave = async () => {
+    const userId = getSessionUserId()
+    if (!userId) {
+      router.replace('/signin')
+      return
+    }
+
+    setError('')
+    setSaveMessage('')
+
+    if (!formData.fullName.trim()) {
+      setError('Full name is required.')
+      return
+    }
+    if (!formData.email.trim()) {
+      setError('Email is required.')
+      return
+    }
+    if (formData.hasSpeechImpairment && !formData.impairmentType.trim()) {
+      setError('Impairment type is required when speech impairment is enabled.')
+      return
+    }
+
     setIsSaving(true)
-    setTimeout(() => setIsSaving(false), 1000)
+    try {
+      const [updatedUser, updatedProfile] = await Promise.all([
+        updateUserById(userId, {
+          full_name: formData.fullName.trim(),
+          email: formData.email.trim(),
+        }),
+        updateUserProfileById(userId, {
+          country: formData.country.trim() || '',
+          primary_language: formData.primaryLanguage,
+          preferred_contribution_type: formData.preferredContributionType as
+            | 'recording'
+            | 'validation'
+            | 'transcription',
+          has_speech_impairment: formData.hasSpeechImpairment,
+          impairment_type: formData.hasSpeechImpairment
+            ? formData.impairmentType.trim()
+            : null,
+          bio: formData.bio.trim() || null,
+        }),
+      ])
+
+      setUser(updatedUser)
+      setProfile(updatedProfile)
+      setSaveMessage('Profile saved successfully.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save profile.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleSignOut = () => {
+    clearSession()
+    router.push('/signin')
+  }
+
+  if (isLoading) {
+    return <div className="min-h-screen bg-background" />
   }
 
   return (
@@ -48,6 +181,8 @@ export default function SettingsPage() {
         <div className="mb-8">
           <h2 className="text-3xl font-bold text-foreground">Settings</h2>
           <p className="text-muted-foreground mt-2">Manage your account and preferences</p>
+          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+          {saveMessage && <p className="mt-2 text-sm text-foreground">{saveMessage}</p>}
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -81,7 +216,7 @@ export default function SettingsPage() {
                 {/* Avatar */}
                 <div className="flex items-center gap-4">
                   <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10 font-bold text-primary text-2xl">
-                    AO
+                    {(user?.full_name ?? 'C').slice(0, 2).toUpperCase()}
                   </div>
                   <Button variant="outline" className="border-border">
                     Change Avatar
@@ -93,7 +228,8 @@ export default function SettingsPage() {
                   <Label htmlFor="name" className="text-sm font-medium">Full Name</Label>
                   <Input
                     id="name"
-                    defaultValue="Amara Okafor"
+                    value={formData.fullName}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, fullName: e.target.value }))}
                     className="border-border"
                   />
                 </div>
@@ -104,30 +240,102 @@ export default function SettingsPage() {
                   <Input
                     id="email"
                     type="email"
-                    defaultValue="amara@corpus.local"
+                    value={formData.email}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
                     className="border-border"
                   />
                   <p className="text-xs text-muted-foreground">
                     <Badge variant="outline" className="mr-2">Verified</Badge>
-                    Verified on March 15, 2025
+                    {user?.id ? `User ID: ${user.id}` : 'Verification data not available'}
                   </p>
                 </div>
 
                 {/* Languages */}
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Languages You Speak</Label>
-                  <Select defaultValue="luganda">
+                  <Select
+                    value={formData.primaryLanguage}
+                    onValueChange={(value) => setFormData((prev) => ({ ...prev, primaryLanguage: value }))}
+                  >
                     <SelectTrigger className="border-border">
-                      <SelectValue />
+                      <SelectValue placeholder="Select a language" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="luganda">Luganda</SelectItem>
-                      <SelectItem value="english">English</SelectItem>
-                      <SelectItem value="swahili">Swahili</SelectItem>
+                      {languages.map((language) => (
+                        <SelectItem key={language.id} value={language.language_name}>
+                          {language.language_name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">You can contribute in all selected languages</p>
                 </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="country" className="text-sm font-medium">Country</Label>
+                    <Input
+                      id="country"
+                      value={formData.country}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, country: e.target.value }))}
+                      className="border-border"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Preferred Contribution Type</Label>
+                    <Select
+                      value={formData.preferredContributionType}
+                      onValueChange={(value) =>
+                        setFormData((prev) => ({ ...prev, preferredContributionType: value }))
+                      }
+                    >
+                      <SelectTrigger className="border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="recording">Recording</SelectItem>
+                        <SelectItem value="validation">Validation</SelectItem>
+                        <SelectItem value="transcription">Transcription</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Speech Impairment</Label>
+                  <Select
+                    value={formData.hasSpeechImpairment ? 'yes' : 'no'}
+                    onValueChange={(value) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        hasSpeechImpairment: value === 'yes',
+                        impairmentType: value === 'yes' ? prev.impairmentType : '',
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="border-border">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="no">No</SelectItem>
+                      <SelectItem value="yes">Yes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {formData.hasSpeechImpairment && (
+                  <div className="space-y-2">
+                    <Label htmlFor="impairment-type" className="text-sm font-medium">Impairment Type</Label>
+                    <Input
+                      id="impairment-type"
+                      value={formData.impairmentType}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, impairmentType: e.target.value }))}
+                      className="border-border"
+                      placeholder="e.g., stutter"
+                    />
+                  </div>
+                )}
 
                 {/* Bio */}
                 <div className="space-y-2">
@@ -135,7 +343,8 @@ export default function SettingsPage() {
                   <Textarea
                     id="bio"
                     placeholder="Tell us about yourself..."
-                    defaultValue="Language enthusiast passionate about speech diversity"
+                    value={formData.bio}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, bio: e.target.value }))}
                     className="border-border resize-none"
                     rows={4}
                   />
@@ -216,20 +425,7 @@ export default function SettingsPage() {
                 <CardDescription>Manage devices accessing your account</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center justify-between pb-4 border-b border-border">
-                  <div>
-                    <p className="font-medium text-foreground">Chrome on macOS</p>
-                    <p className="text-sm text-muted-foreground">Last active: Today at 2:45 PM</p>
-                  </div>
-                  <Badge>Current</Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-foreground">Safari on iPhone</p>
-                    <p className="text-sm text-muted-foreground">Last active: Yesterday at 10:20 AM</p>
-                  </div>
-                  <Button size="sm" variant="outline" className="border-border">Sign Out</Button>
-                </div>
+                <p className="text-sm text-muted-foreground">Session tracking is not available from the backend yet.</p>
               </CardContent>
             </Card>
           </TabsContent>
@@ -261,16 +457,8 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-foreground mb-2">Bank Account Details</p>
                   <div className="space-y-3 text-sm">
                     <div>
-                      <p className="text-muted-foreground">Account Name</p>
-                      <p className="font-medium text-foreground">Amara Okafor</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Account Number</p>
-                      <p className="font-medium text-foreground">••••••••1234</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Bank</p>
-                      <p className="font-medium text-foreground">Standard Chartered Bank Uganda</p>
+                      <p className="text-muted-foreground">Wallet Balance</p>
+                      <p className="font-medium text-foreground">{wallet ? `${wallet.balance.toFixed(2)} ${wallet.currency}` : '0.00 USD'}</p>
                     </div>
                   </div>
                 </div>
@@ -285,21 +473,7 @@ export default function SettingsPage() {
                 <CardDescription>View your past payouts</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {[
-                    { date: 'March 15, 2025', amount: '$245.50', status: 'Completed' },
-                    { date: 'February 28, 2025', amount: '$198.75', status: 'Completed' },
-                    { date: 'February 15, 2025', amount: '$312.00', status: 'Completed' },
-                  ].map((payout, idx) => (
-                    <div key={idx} className="flex items-center justify-between pb-3 border-b border-border last:border-0">
-                      <div>
-                        <p className="font-medium text-foreground">{payout.date}</p>
-                        <Badge variant="outline" className="mt-1">{payout.status}</Badge>
-                      </div>
-                      <p className="font-semibold text-primary">{payout.amount}</p>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-sm text-muted-foreground">Payout history endpoint is not available from the backend yet.</p>
               </CardContent>
             </Card>
           </TabsContent>
@@ -375,7 +549,7 @@ export default function SettingsPage() {
                 <p className="font-medium text-foreground">Sign out</p>
                 <p className="text-sm text-muted-foreground">End your current session</p>
               </div>
-              <Button variant="outline" className="border-destructive text-destructive hover:bg-destructive/10">
+              <Button variant="outline" className="border-destructive text-destructive hover:bg-destructive/10" onClick={handleSignOut}>
                 <LogOut className="h-4 w-4 mr-2" />
                 Sign Out
               </Button>

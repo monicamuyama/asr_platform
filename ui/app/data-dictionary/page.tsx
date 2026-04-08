@@ -1,13 +1,25 @@
 'use client'
 
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { BookOpen, Database, Globe, Zap, Users, BarChart3 } from 'lucide-react'
+import { BookOpen, Database, Globe, Zap, BarChart3 } from 'lucide-react'
 import Link from 'next/link'
+import { getSessionUserId } from '@/lib/auth'
 
 export default function DataDictionary() {
+  const router = useRouter()
+
+  useEffect(() => {
+    const userId = getSessionUserId()
+    if (!userId) {
+      router.replace('/signin')
+    }
+  }, [router])
+
   const dataFields = [
     {
       name: 'submission_id',

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ============================================================================
 # 1. AUTHENTICATION & USER REGISTRATION
@@ -23,6 +23,12 @@ class UserLoginRequest(BaseModel):
     password: str
 
 
+class UserUpdateRequest(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    email: Optional[str] = Field(None, min_length=5)
+    onboarding_completed: Optional[bool] = None
+
+
 class UserSchema(BaseModel):
     id: str
     full_name: str
@@ -30,6 +36,7 @@ class UserSchema(BaseModel):
     phone_number: Optional[str]
     auth_provider: str
     is_verified: bool
+    onboarding_completed: bool
     role: str
     created_at: datetime
     updated_at: datetime
@@ -216,6 +223,17 @@ class UserProfileRequest(BaseModel):
     profile_photo_url: Optional[str] = None
 
 
+class UserProfileUpdateRequest(BaseModel):
+    country: Optional[str] = None
+    primary_language: Optional[str] = None
+    preferred_contribution_type: Optional[Literal["recording", "validation", "transcription"]] = None
+    has_speech_impairment: Optional[bool] = None
+    impairment_type: Optional[str] = None
+    can_read_sentences: Optional[bool] = None
+    bio: Optional[str] = None
+    profile_photo_url: Optional[str] = None
+
+
 class UserProfileSchema(BaseModel):
     id: str
     user_id: str
@@ -288,6 +306,15 @@ class FullSignupRequest(BaseModel):
 
     # Step 6: Language preferences
     language_preferences: list[UserLanguagePreferenceRequest]
+
+    @model_validator(mode="after")
+    def validate_accessibility_fields(self) -> "FullSignupRequest":
+        if self.has_speech_impairment:
+            if not self.impairment_type:
+                raise ValueError("impairment_type is required when has_speech_impairment is true")
+            if not self.speech_conditions:
+                raise ValueError("speech_conditions are required when has_speech_impairment is true")
+        return self
 
 
 class SignupResponseSchema(BaseModel):
