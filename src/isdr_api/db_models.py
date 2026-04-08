@@ -26,6 +26,10 @@ class Submission(Base):
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     speaker_profile: Mapped[str] = mapped_column(String(255), nullable=False)
     consent_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_word: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    read_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_prompt_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    spontaneous_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     cid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(
@@ -44,6 +48,9 @@ class Submission(Base):
     )
     audit_events: Mapped[list[AuditEvent]] = relationship(
         "AuditEvent", back_populates="submission", cascade="all, delete-orphan"
+    )
+    tips: Mapped[list[Tip]] = relationship(
+        "Tip", back_populates="submission", cascade="all, delete-orphan"
     )
 
 
@@ -126,4 +133,36 @@ class AuditEvent(Base):
 
     submission: Mapped[Submission | None] = relationship(
         "Submission", back_populates="audit_events"
+    )
+
+
+class Tip(Base):
+    __tablename__ = "tips"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    submission_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    contributor_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    tipper_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+    submission: Mapped[Submission] = relationship("Submission", back_populates="tips")
+
+
+class UserAccount(Base):
+    __tablename__ = "user_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    handle: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    preferred_language: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
     )

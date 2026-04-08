@@ -3,7 +3,27 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+
+
+class UserRegister(BaseModel):
+    handle: str = Field(min_length=3, max_length=50)
+    display_name: str = Field(min_length=1, max_length=120)
+    preferred_language: str = Field(min_length=2, max_length=20)
+
+
+class UserSchema(BaseModel):
+    id: str
+    handle: str
+    display_name: str
+    preferred_language: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 # ---------------------------------------------------------------------------
 # Submission
@@ -13,9 +33,31 @@ from pydantic import BaseModel, Field
 class SubmissionCreate(BaseModel):
     contributor_id: str = Field(min_length=1)
     language_code: str = Field(min_length=2)
-    mode: Literal["prompted", "read", "spontaneous"]
+    mode: Literal["prompted", "recording", "read_out", "spontaneous_image"]
     speaker_profile: str = Field(min_length=1)
     consent_version: str = Field(min_length=1)
+    target_word: Optional[str] = None
+    read_prompt: Optional[str] = None
+    image_prompt_url: Optional[str] = None
+    spontaneous_instruction: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_mode_requirements(self) -> "SubmissionCreate":
+        if self.mode == "recording" and not self.target_word:
+            raise ValueError("target_word is required for recording mode")
+        if self.mode == "read_out":
+            if not self.target_word:
+                raise ValueError("target_word is required for read_out mode")
+            if not self.read_prompt:
+                raise ValueError("read_prompt is required for read_out mode")
+        if self.mode == "spontaneous_image":
+            if not self.image_prompt_url:
+                raise ValueError("image_prompt_url is required for spontaneous_image mode")
+            if not self.spontaneous_instruction:
+                raise ValueError(
+                    "spontaneous_instruction is required for spontaneous_image mode"
+                )
+        return self
 
 
 class SubmissionSchema(BaseModel):
@@ -25,6 +67,10 @@ class SubmissionSchema(BaseModel):
     mode: str
     speaker_profile: str
     consent_version: str
+    target_word: Optional[str] = None
+    read_prompt: Optional[str] = None
+    image_prompt_url: Optional[str] = None
+    spontaneous_instruction: Optional[str] = None
     status: str
     aggregate_score: Optional[float] = None
     created_at: datetime
@@ -100,6 +146,41 @@ class ExpertQueueItemSchema(BaseModel):
     aggregate_score: Optional[float] = None
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Tipping
+# ---------------------------------------------------------------------------
+
+
+class TipCreate(BaseModel):
+    submission_id: str
+    tipper_id: str = Field(min_length=1)
+    amount: float = Field(gt=0)
+    rating: int = Field(ge=1, le=5)
+    currency: Literal["USD", "EUR", "GBP"] = "USD"
+    message: Optional[str] = None
+
+
+class TipSchema(BaseModel):
+    id: int
+    submission_id: str
+    contributor_id: str
+    tipper_id: str
+    amount: float
+    rating: int
+    currency: str
+    message: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ContributorTipSummarySchema(BaseModel):
+    contributor_id: str
+    total_tips: int
+    total_amount: float
+    average_rating: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

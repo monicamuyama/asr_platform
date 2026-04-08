@@ -1,5 +1,8 @@
 # ISDR MVP Product Spec
 
+> Archived planning note: this document describes an earlier MVP workflow.
+> The current implementation is extended-only and centered on `/auth/*` endpoints.
+
 ## Problem Statement
 Low-resource language speakers and speakers with speech/language disorders are poorly represented in ASR training corpora due to centralized collection and non-contextual quality filtering.
 

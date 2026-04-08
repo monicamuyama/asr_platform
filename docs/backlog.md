@@ -1,5 +1,8 @@
 # ISDR Backlog (Execution Starter)
 
+> Archived planning note: this backlog tracks legacy MVP workflow items.
+> The current app flow is extended-only via `/auth/*` endpoints.
+
 ## Sprint 1: Platform Skeleton + Auth
 - [ ] Create monorepo structure (`web-app`, `api-service`, `worker-service`).
 - [ ] Add Docker Compose for PostgreSQL + Redis.

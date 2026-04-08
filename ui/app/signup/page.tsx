@@ -1,0 +1,375 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import Link from 'next/link'
+import { Mail, Lock, User, Globe, ArrowLeft, CheckCircle } from 'lucide-react'
+import { API_BASE, type ConsentDocument, type Country, type Language } from '@/lib/api'
+
+export default function SignUpPage() {
+  const [step, setStep] = useState(1)
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    languageId: '',
+    countryId: '',
+  })
+  const [countries, setCountries] = useState<Country[]>([])
+  const [languages, setLanguages] = useState<Language[]>([])
+  const [consents, setConsents] = useState<ConsentDocument[]>([])
+  const [acceptRequiredConsents, setAcceptRequiredConsents] = useState(true)
+  const [error, setError] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    const loadReferenceData = async () => {
+      try {
+        const [countryRes, langRes, consentRes] = await Promise.all([
+          fetch(`${API_BASE}/auth/countries`),
+          fetch(`${API_BASE}/auth/languages`),
+          fetch(`${API_BASE}/auth/consent-documents`),
+        ])
+
+        if (!countryRes.ok || !langRes.ok || !consentRes.ok) {
+          throw new Error('Failed to load reference data from backend')
+        }
+
+        const [countryData, langData, consentData] = await Promise.all([
+          countryRes.json() as Promise<Country[]>,
+          langRes.json() as Promise<Language[]>,
+          consentRes.json() as Promise<ConsentDocument[]>,
+        ])
+
+        setCountries(countryData)
+        setLanguages(langData)
+        setConsents(consentData)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to reach backend API')
+      }
+    }
+
+    void loadReferenceData()
+  }, [])
+
+  const selectedCountry = useMemo(
+    () => countries.find((country) => country.id === formData.countryId) ?? null,
+    [countries, formData.countryId],
+  )
+
+  const selectedLanguage = useMemo(
+    () => languages.find((language) => language.id === formData.languageId) ?? null,
+    [languages, formData.languageId],
+  )
+
+  const handleInputChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+  }
+
+  const handleNext = () => {
+    if (step < 3) {
+      setStep(step + 1)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+
+    if (!acceptRequiredConsents) {
+      setError('You must agree to all required consent documents.')
+      return
+    }
+
+    if (!selectedCountry || !selectedLanguage) {
+      setError('Please select a valid country and language loaded from backend.')
+      return
+    }
+
+    setIsLoading(true)
+
+    try {
+      const response = await fetch(`${API_BASE}/auth/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          full_name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          phone_number: null,
+          consents: consents.map((document) => ({
+            document_id: document.id,
+            agreed: true,
+          })),
+          country: selectedCountry.country_name,
+          primary_language: selectedLanguage.language_name,
+          preferred_contribution_type: 'recording',
+          has_speech_impairment: false,
+          impairment_type: null,
+          bio: null,
+          age_range: null,
+          gender: null,
+          country_id: selectedCountry.id,
+          region_id: null,
+          district: null,
+          native_language_id: selectedLanguage.id,
+          education_level: null,
+          speech_conditions: [],
+          language_preferences: [
+            {
+              language_id: selectedLanguage.id,
+              dialect_id: null,
+              is_primary_language: true,
+              can_record: true,
+              can_transcribe: false,
+              can_validate: false,
+              proficiency_level: 'native',
+            },
+          ],
+        }),
+      })
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { detail?: string }
+        throw new Error(payload.detail ?? 'Signup failed')
+      }
+
+      const payload = (await response.json()) as { user?: { id?: string } }
+      if (payload.user?.id) {
+        localStorage.setItem('isdr_user_id', payload.user.id)
+      }
+
+      setStep(3)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Signup failed')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md">
+        <div className="mb-8">
+          <Link href="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition mb-8">
+            <ArrowLeft className="h-4 w-4" />
+            Back to home
+          </Link>
+          
+          <div className="flex items-center gap-3 mb-2">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-teal font-bold text-white">
+              CW
+            </div>
+            <h1 className="text-2xl font-bold text-foreground">CorpusWeave</h1>
+          </div>
+          <p className="text-muted-foreground text-sm">Community Speech Data Platform</p>
+        </div>
+
+        {step !== 3 && (
+          <div className="mb-6 flex gap-2">
+            {[1, 2].map(s => (
+              <div 
+                key={s} 
+                className={`flex-1 h-2 rounded-full ${s <= step ? 'bg-primary' : 'bg-muted'}`}
+              />
+            ))}
+          </div>
+        )}
+
+        <Card className="border-border">
+          {step === 1 && (
+            <>
+              <CardHeader>
+                <CardTitle>Create Your Account</CardTitle>
+                <CardDescription>Step 1 of 2: Basic Information</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name" className="text-sm font-medium">Full Name</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="name"
+                        placeholder="Amara Okafor"
+                        value={formData.name}
+                        onChange={(e) => handleInputChange('name', e.target.value)}
+                        className="pl-10 border-border"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="you@example.com"
+                        value={formData.email}
+                        onChange={(e) => handleInputChange('email', e.target.value)}
+                        className="pl-10 border-border"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="password"
+                        type="password"
+                        placeholder="••••••••"
+                        value={formData.password}
+                        onChange={(e) => handleInputChange('password', e.target.value)}
+                        className="pl-10 border-border"
+                        required
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">At least 8 characters</p>
+                  </div>
+
+                  <Button 
+                    type="button"
+                    onClick={handleNext}
+                    disabled={!formData.name || !formData.email || formData.password.length < 8}
+                    className="w-full bg-primary hover:bg-primary/90 mt-6"
+                  >
+                    Next
+                  </Button>
+                </form>
+              </CardContent>
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <CardHeader>
+                <CardTitle>Language & Location</CardTitle>
+                <CardDescription>Step 2 of 2: Tell us about yourself</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="language" className="text-sm font-medium">Primary Language</Label>
+                    <Select value={formData.languageId} onValueChange={(value) => handleInputChange('languageId', value)}>
+                      <SelectTrigger className="border-border">
+                        <SelectValue placeholder="Select a language" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {languages.map((language) => (
+                          <SelectItem key={language.id} value={language.id}>{language.language_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="country" className="text-sm font-medium">Country</Label>
+                    <Select value={formData.countryId} onValueChange={(value) => handleInputChange('countryId', value)}>
+                      <SelectTrigger className="border-border">
+                        <SelectValue placeholder="Select a country" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {countries.map((country) => (
+                          <SelectItem key={country.id} value={country.id}>{country.country_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-3 my-6 p-4 rounded-lg bg-muted/50 border border-border">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={acceptRequiredConsents}
+                        onChange={(e) => setAcceptRequiredConsents(e.target.checked)}
+                      />
+                      <span className="text-sm">I agree to all required consent documents ({consents.length})</span>
+                    </label>
+                  </div>
+
+                  {error && <p className="text-sm text-red-600">{error}</p>}
+
+                  <div className="flex gap-3">
+                    <Button 
+                      type="button"
+                      variant="outline"
+                      onClick={() => setStep(1)}
+                      className="flex-1 border-border"
+                    >
+                      Back
+                    </Button>
+                    <Button 
+                      type="submit"
+                      className="flex-1 bg-primary hover:bg-primary/90"
+                      disabled={isLoading || !formData.languageId || !formData.countryId || consents.length === 0}
+                    >
+                      {isLoading ? 'Creating...' : 'Create Account'}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </>
+          )}
+
+          {step === 3 && (
+            <>
+              <CardHeader>
+                <CardTitle>Welcome to CorpusWeave!</CardTitle>
+                <CardDescription>Your account has been created</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex justify-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                    <CheckCircle className="h-8 w-8 text-primary" />
+                  </div>
+                </div>
+
+                <div className="bg-muted/50 rounded-lg p-4 border border-border text-center">
+                  <p className="text-sm font-medium text-foreground mb-1">{formData.name}</p>
+                  <p className="text-xs text-muted-foreground">{formData.email}</p>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <p className="text-foreground font-medium">What&apos;s next?</p>
+                  <ul className="space-y-1 text-muted-foreground text-xs">
+                    <li>✓ Complete your profile</li>
+                    <li>✓ Verify your email</li>
+                    <li>✓ Start your first task</li>
+                    <li>✓ Earn your first reward</li>
+                  </ul>
+                </div>
+
+                <Button 
+                  onClick={() => window.location.href = '/'}
+                  className="w-full bg-primary hover:bg-primary/90"
+                >
+                  Go to Dashboard
+                </Button>
+
+                <p className="text-center text-xs text-muted-foreground">
+                  Already have an account?{' '}
+                  <Link href="/signin" className="text-primary hover:underline font-medium">
+                    Sign in
+                  </Link>
+                </p>
+              </CardContent>
+            </>
+          )}
+        </Card>
+      </div>
+    </div>
+  )
+}

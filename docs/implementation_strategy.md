@@ -1,5 +1,8 @@
 # ISDR Implementation Strategy (MVP -> V1)
 
+> Archived planning note: this strategy targets an earlier MVP workflow.
+> The active runtime is extended-only and uses `/auth/*` endpoints.
+
 ## 1) Goal
 Build a production-oriented MVP of the Inclusive Speech Data Refinery (ISDR) that supports:
 - Contributor audio submission with metadata

@@ -63,6 +63,45 @@ def test_governance_active_returns_defaults():
 
 
 # ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+
+
+def test_register_user_and_list_users():
+    response = client.post(
+        "/users/register",
+        json={
+            "handle": "monica_voice",
+            "display_name": "Monica",
+            "preferred_language": "lg",
+        },
+    )
+    assert response.status_code == 200
+    user = response.json()
+    assert user["handle"] == "monica_voice"
+
+    list_response = client.get("/users")
+    assert list_response.status_code == 200
+    users = list_response.json()
+    assert len(users) == 1
+    assert users[0]["handle"] == "monica_voice"
+
+
+def test_register_duplicate_handle_blocked():
+    payload = {
+        "handle": "repeat_handle",
+        "display_name": "Person One",
+        "preferred_language": "en",
+    }
+    first = client.post("/users/register", json=payload)
+    assert first.status_code == 200
+
+    second = client.post("/users/register", json=payload)
+    assert second.status_code == 400
+    assert "already registered" in second.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
 # Submissions
 # ---------------------------------------------------------------------------
 
@@ -106,6 +145,40 @@ def test_list_submissions():
     response = client.get("/submissions")
     assert response.status_code == 200
     assert len(response.json()) == 2
+
+
+def test_create_read_out_submission_with_prompt_fields():
+    response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_read",
+            "language_code": "en",
+            "mode": "read_out",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "target_word": "banana",
+            "read_prompt": "Please read this word clearly: banana",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["mode"] == "read_out"
+    assert data["target_word"] == "banana"
+    assert data["read_prompt"] is not None
+
+
+def test_spontaneous_image_submission_requires_image_fields():
+    response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_sp",
+            "language_code": "en",
+            "mode": "spontaneous_image",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+        },
+    )
+    assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +343,107 @@ def test_accept_without_quality_tier_blocked():
     )
     assert response.status_code == 400
     assert "quality_tier" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Tipping
+# ---------------------------------------------------------------------------
+
+
+def _advance_to_accepted() -> str:
+    sub_id = _advance_to_expert()
+    response = client.post(
+        "/expert/reviews",
+        json={
+            "submission_id": sub_id,
+            "expert_id": "expert_01",
+            "decision": "accepted",
+            "quality_tier": "Standard",
+        },
+    )
+    assert response.status_code == 200
+    return sub_id
+
+
+def test_tip_accepted_submission():
+    sub_id = _advance_to_accepted()
+    response = client.post(
+        "/tips",
+        json={
+            "submission_id": sub_id,
+            "tipper_id": "listener_01",
+            "amount": 4.5,
+            "rating": 5,
+            "currency": "USD",
+            "message": "Great contribution",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["submission_id"] == sub_id
+    assert data["contributor_id"] == "c1"
+    assert data["amount"] == 4.5
+    assert data["rating"] == 5
+
+
+def test_tip_non_accepted_submission_blocked():
+    sub = _create_submission()
+    response = client.post(
+        "/tips",
+        json={
+            "submission_id": sub["id"],
+            "tipper_id": "listener_01",
+            "amount": 2.0,
+            "rating": 4,
+            "currency": "USD",
+        },
+    )
+    assert response.status_code == 400
+    assert "only allowed" in response.json()["detail"]
+
+
+def test_self_tip_blocked():
+    sub_id = _advance_to_accepted()
+    response = client.post(
+        "/tips",
+        json={
+            "submission_id": sub_id,
+            "tipper_id": "c1",
+            "amount": 1.0,
+            "rating": 5,
+            "currency": "USD",
+        },
+    )
+    assert response.status_code == 400
+    assert "cannot tip their own" in response.json()["detail"]
+
+
+def test_contributor_tip_summary():
+    sub_id = _advance_to_accepted()
+    client.post(
+        "/tips",
+        json={
+            "submission_id": sub_id,
+            "tipper_id": "listener_01",
+            "amount": 3.0,
+            "rating": 4,
+            "currency": "USD",
+        },
+    )
+    client.post(
+        "/tips",
+        json={
+            "submission_id": sub_id,
+            "tipper_id": "listener_02",
+            "amount": 2.5,
+            "rating": 5,
+            "currency": "USD",
+        },
+    )
+    response = client.get("/tips/contributors/c1")
+    assert response.status_code == 200
+    summary = response.json()
+    assert summary["contributor_id"] == "c1"
+    assert summary["total_tips"] == 2
+    assert summary["total_amount"] == 5.5
+    assert summary["average_rating"] == 4.5

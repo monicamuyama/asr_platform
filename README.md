@@ -1,5 +1,12 @@
 # ISDR Core Prototype
 
+## Runtime Mode
+
+This project now runs in extended mode only.
+
+- Active API namespace: `/auth/*`
+- Legacy minimal workflow endpoints (`/users`, `/submissions`, `/community`, `/expert`, `/tips`, `/governance`) have been removed.
+
 This repository currently contains:
 - Implementation planning docs in docs/
 - A Python core module for ISDR routing logic in src/isdr_core/
@@ -45,6 +52,12 @@ PYTHONPATH=src uvicorn isdr_api.main:app --reload --host 127.0.0.1 --port 8000
 
 - http://127.0.0.1:8000/docs
 
+4. Verify extended endpoints:
+
+- http://127.0.0.1:8000/health
+- http://127.0.0.1:8000/auth/consent-documents
+- http://127.0.0.1:8000/auth/languages
+
 ## UI setup (Next.js)
 
 1. Install dependencies:
@@ -60,6 +73,8 @@ npm install
 cp .env.local.example .env.local
 ```
 
+`NEXT_PUBLIC_API_BASE` defaults to `http://127.0.0.1:8000` and should match your FastAPI host/port.
+
 3. Run dev server:
 
 ```bash
@@ -72,3 +87,5 @@ npm run dev
 npm run lint
 npm run build
 ```
+
+The UI is aligned to extended auth/profile flows (`/sign-up`, `/sign-in`).

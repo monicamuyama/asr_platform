@@ -103,8 +103,27 @@ def upgrade() -> None:
     )
     op.create_index("ix_audit_events_submission_id", "audit_events", ["submission_id"])
 
+    op.create_table(
+        "tips",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("submission_id", sa.String(36), nullable=False),
+        sa.Column("contributor_id", sa.String(255), nullable=False),
+        sa.Column("tipper_id", sa.String(255), nullable=False),
+        sa.Column("amount", sa.Float(), nullable=False),
+        sa.Column("rating", sa.Integer(), nullable=False),
+        sa.Column("currency", sa.String(3), nullable=False),
+        sa.Column("message", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["submission_id"], ["submissions.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_tips_submission_id", "tips", ["submission_id"])
+    op.create_index("ix_tips_contributor_id", "tips", ["contributor_id"])
+    op.create_index("ix_tips_tipper_id", "tips", ["tipper_id"])
+
 
 def downgrade() -> None:
+    op.drop_table("tips")
     op.drop_table("audit_events")
     op.drop_table("governance_params")
     op.drop_table("expert_reviews")
