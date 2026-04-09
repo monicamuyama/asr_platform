@@ -358,7 +358,56 @@ export default function CorpusWeaveDashboard() {
       riddle: 'Ekikokooma',
       photo_description: 'Okunnyonnyola Ekifaananyi',
     },
+    SWA: {
+      proverb: 'Methali',
+      idiom: 'Nahau',
+      common_saying: 'Usemi wa kawaida',
+      riddle: 'Kitendawili',
+      photo_description: 'Maelezo ya Picha',
+    },
     ENG: {
+      proverb: 'Proverb',
+      idiom: 'Idiom',
+      common_saying: 'Common Saying',
+      riddle: 'Riddle',
+      photo_description: 'Photo Description',
+    },
+    LSG: {
+      proverb: 'Proverb',
+      idiom: 'Idiom',
+      common_saying: 'Common Saying',
+      riddle: 'Riddle',
+      photo_description: 'Photo Description',
+    },
+    LMS: {
+      proverb: 'Proverb',
+      idiom: 'Idiom',
+      common_saying: 'Common Saying',
+      riddle: 'Riddle',
+      photo_description: 'Photo Description',
+    },
+    ACH: {
+      proverb: 'Proverb',
+      idiom: 'Idiom',
+      common_saying: 'Common Saying',
+      riddle: 'Riddle',
+      photo_description: 'Photo Description',
+    },
+    RUN: {
+      proverb: 'Proverb',
+      idiom: 'Idiom',
+      common_saying: 'Common Saying',
+      riddle: 'Riddle',
+      photo_description: 'Photo Description',
+    },
+    ATE: {
+      proverb: 'Proverb',
+      idiom: 'Idiom',
+      common_saying: 'Common Saying',
+      riddle: 'Riddle',
+      photo_description: 'Photo Description',
+    },
+    LUG: {
       proverb: 'Proverb',
       idiom: 'Idiom',
       common_saying: 'Common Saying',
@@ -376,12 +425,61 @@ export default function CorpusWeaveDashboard() {
       riddle: 'Ekikokooma: Kiki ekimera nga tekirina mmwanyi?',
       photo_description: "Nnyonnyola ky'olaba mu kifaananyi kino mu bulungi.",
     },
+    SWA: {
+      proverb: 'Haraka haraka haina baraka.',
+      idiom: 'Maji yaliyomwagika hayazoleki.',
+      common_saying: 'Vikono vingi hupunguza kazi.',
+      riddle: 'Kitendawili: Ni nini huota bila mbegu?',
+      photo_description: 'Eleza kwa undani kile unachokiona kwenye picha uliyopewa.',
+    },
     ENG: {
       proverb: 'The future is built by those who contribute today.',
       idiom: 'A river does not forget its source.',
       common_saying: 'Many hands make light work.',
       riddle: 'What has roots that nobody sees and grows taller than trees?',
       photo_description: 'Describe what you see in the assigned image with clear detail.',
+    },
+    LSG: {
+      proverb: 'Record a proverb in Lusoga that sounds natural to native speakers.',
+      idiom: 'Record an idiom in Lusoga that people use in everyday speech.',
+      common_saying: 'Record a common saying in Lusoga that is easy to recognize.',
+      riddle: 'Record a Lusoga riddle that challenges the listener.',
+      photo_description: 'Describe the image in Lusoga with clear detail.',
+    },
+    LMS: {
+      proverb: 'Record a proverb in Lumasaba that sounds natural to native speakers.',
+      idiom: 'Record an idiom in Lumasaba that people use in everyday speech.',
+      common_saying: 'Record a common saying in Lumasaba that is easy to recognize.',
+      riddle: 'Record a Lumasaba riddle that challenges the listener.',
+      photo_description: 'Describe the image in Lumasaba with clear detail.',
+    },
+    ACH: {
+      proverb: 'Record a proverb in Acholi that sounds natural to native speakers.',
+      idiom: 'Record an idiom in Acholi that people use in everyday speech.',
+      common_saying: 'Record a common saying in Acholi that is easy to recognize.',
+      riddle: 'Record an Acholi riddle that challenges the listener.',
+      photo_description: 'Describe the image in Acholi with clear detail.',
+    },
+    RUN: {
+      proverb: 'Record a proverb in Runyakore that sounds natural to native speakers.',
+      idiom: 'Record an idiom in Runyakore that people use in everyday speech.',
+      common_saying: 'Record a common saying in Runyakore that is easy to recognize.',
+      riddle: 'Record a Runyakore riddle that challenges the listener.',
+      photo_description: 'Describe the image in Runyakore with clear detail.',
+    },
+    ATE: {
+      proverb: 'Record a proverb in Ateso that sounds natural to native speakers.',
+      idiom: 'Record an idiom in Ateso that people use in everyday speech.',
+      common_saying: 'Record a common saying in Ateso that is easy to recognize.',
+      riddle: 'Record an Ateso riddle that challenges the listener.',
+      photo_description: 'Describe the image in Ateso with clear detail.',
+    },
+    LUG: {
+      proverb: 'Record a proverb in Lugbara that sounds natural to native speakers.',
+      idiom: 'Record an idiom in Lugbara that people use in everyday speech.',
+      common_saying: 'Record a common saying in Lugbara that is easy to recognize.',
+      riddle: 'Record a Lugbara riddle that challenges the listener.',
+      photo_description: 'Describe the image in Lugbara with clear detail.',
     },
   }
   const recordPrompt = (recordPromptByLanguage[selectedTargetLanguageCode] ?? recordPromptByLanguage.ENG)[selectedCategory]
@@ -1005,6 +1103,9 @@ export default function CorpusWeaveDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <div className="mb-4 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+                  You are contributing in <strong>{selectedTargetLanguage?.language_name ?? userLanguage}</strong>. The category labels and prompts below follow that language.
+                </div>
                 <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
                   {[
                     { key: 'proverb', label: localizedCategoryLabels.proverb },

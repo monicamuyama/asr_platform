@@ -37,10 +37,10 @@ export default function DataDictionary() {
     },
     {
       name: 'language',
-      type: 'String (ISO 639-1)',
+      type: 'String (language code)',
       required: true,
       description: 'Language of the audio sample',
-      example: 'lg (Luganda), ach (Acholi), en (English)'
+      example: 'lg (Luganda), lsg (Lusoga), lms (Lumasaba), ach (Acholi), run (Runyakore), ate (Ateso), lug (Lugbara), en (English)'
     },
     {
       name: 'audio_url',
@@ -109,7 +109,12 @@ export default function DataDictionary() {
 
   const languages = [
     { code: 'lg', name: 'Luganda', country: 'Uganda', speakers: '16M' },
+    { code: 'lsg', name: 'Lusoga', country: 'Uganda', speakers: '4M' },
+    { code: 'lms', name: 'Lumasaba', country: 'Uganda', speakers: '4M' },
     { code: 'ach', name: 'Acholi', country: 'Uganda', speakers: '1.5M' },
+    { code: 'run', name: 'Runyakore', country: 'Uganda', speakers: '4M' },
+    { code: 'ate', name: 'Ateso', country: 'Uganda', speakers: '2M' },
+    { code: 'lug', name: 'Lugbara', country: 'Uganda', speakers: '2M' },
     { code: 'en', name: 'English', country: 'Global', speakers: '1.5B' },
     { code: 'sw', name: 'Swahili', country: 'East Africa', speakers: '150M' },
     { code: 'yo', name: 'Yoruba', country: 'Nigeria', speakers: '45M' },

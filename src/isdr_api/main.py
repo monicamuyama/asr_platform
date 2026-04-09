@@ -106,30 +106,38 @@ def _seed_reference_data(db: Session) -> None:
             db.add(District(country_id=uganda.id, district_name=district_name))
         db.flush()
 
-    existing_languages = db.query(Language).count()
-    if existing_languages == 0:
-        db.add_all(
-            [
+    languages = [
+        {"language_name": "Luganda", "iso_code": "LG", "is_low_resource": True},
+        {"language_name": "English", "iso_code": "ENG", "is_low_resource": False},
+        {"language_name": "Swahili", "iso_code": "SWA", "is_low_resource": False},
+        {"language_name": "Lusoga", "iso_code": "LSG", "is_low_resource": True},
+        {"language_name": "Lumasaba", "iso_code": "LMS", "is_low_resource": True},
+        {"language_name": "Acholi", "iso_code": "ACH", "is_low_resource": True},
+        {"language_name": "Runyakore", "iso_code": "RUN", "is_low_resource": True},
+        {"language_name": "Ateso", "iso_code": "ATE", "is_low_resource": True},
+        {"language_name": "Lugbara", "iso_code": "LUG", "is_low_resource": True},
+    ]
+
+    existing_languages = {
+        language.iso_code: language
+        for language in db.query(Language).filter(Language.country_id == uganda.id).all()
+    }
+
+    for language_spec in languages:
+        existing_language = existing_languages.get(language_spec["iso_code"])
+        if existing_language:
+            existing_language.language_name = language_spec["language_name"]
+            existing_language.is_low_resource = language_spec["is_low_resource"]
+            existing_language.country_id = uganda.id
+        else:
+            db.add(
                 Language(
-                    language_name="Luganda",
-                    iso_code="LG",
+                    language_name=language_spec["language_name"],
+                    iso_code=language_spec["iso_code"],
                     country_id=uganda.id,
-                    is_low_resource=True,
-                ),
-                Language(
-                    language_name="English",
-                    iso_code="ENG",
-                    country_id=uganda.id,
-                    is_low_resource=False,
-                ),
-                Language(
-                    language_name="Swahili",
-                    iso_code="SWA",
-                    country_id=uganda.id,
-                    is_low_resource=False,
-                ),
-            ]
-        )
+                    is_low_resource=language_spec["is_low_resource"],
+                )
+            )
 
     required_consents = {
         "privacy_policy": {
