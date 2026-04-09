@@ -33,6 +33,54 @@ type SignupDraft = {
   acceptedConsentIds: string[]
 }
 
+const DEFAULT_FORM_DATA: SignupDraft['formData'] = {
+  name: '',
+  email: '',
+  password: '',
+  languageId: '',
+  countryId: '',
+  districtId: '',
+  tribeEthnicity: '',
+  hasSpeechImpairment: false,
+  speechConditionId: '',
+  speechConditionSeverity: 'mild',
+  speechConditionNotes: '',
+  speechConditionResearchConsent: false,
+}
+
+function normalizeSignupDraft(rawDraft: unknown): SignupDraft | null {
+  if (!rawDraft || typeof rawDraft !== 'object') {
+    return null
+  }
+
+  const draft = rawDraft as Partial<SignupDraft>
+  const rawStep = typeof draft.step === 'number' ? draft.step : Number(draft.step)
+  const normalizedStep = Number.isFinite(rawStep) && rawStep >= 1 && rawStep <= 2 ? Math.floor(rawStep) : 1
+
+  const rawFormData = (draft.formData && typeof draft.formData === 'object') ? draft.formData : {}
+  const normalizedFormData = {
+    ...DEFAULT_FORM_DATA,
+    ...rawFormData,
+    hasSpeechImpairment: Boolean((rawFormData as Partial<SignupDraft['formData']>).hasSpeechImpairment),
+    speechConditionResearchConsent: Boolean((rawFormData as Partial<SignupDraft['formData']>).speechConditionResearchConsent),
+    speechConditionSeverity:
+      (rawFormData as Partial<SignupDraft['formData']>).speechConditionSeverity === 'moderate'
+      || (rawFormData as Partial<SignupDraft['formData']>).speechConditionSeverity === 'severe'
+        ? (rawFormData as Partial<SignupDraft['formData']>).speechConditionSeverity
+        : 'mild',
+  }
+
+  const normalizedAcceptedConsentIds = Array.isArray(draft.acceptedConsentIds)
+    ? draft.acceptedConsentIds.filter((value): value is string => typeof value === 'string')
+    : []
+
+  return {
+    step: normalizedStep,
+    formData: normalizedFormData,
+    acceptedConsentIds: normalizedAcceptedConsentIds,
+  }
+}
+
 function loadSignupDraft(): SignupDraft | null {
   if (typeof window === 'undefined') {
     return null
@@ -44,7 +92,7 @@ function loadSignupDraft(): SignupDraft | null {
   }
 
   try {
-    return JSON.parse(rawDraft) as SignupDraft
+    return normalizeSignupDraft(JSON.parse(rawDraft))
   } catch {
     return null
   }
@@ -67,40 +115,27 @@ function clearSignupDraft(): void {
 }
 
 export default function SignUpPage() {
+  const initialDraft = useMemo(() => loadSignupDraft(), [])
   const [step, setStep] = useState(1)
-  const [formData, setFormData] = useState(() => loadSignupDraft()?.formData ?? {
-    name: '',
-    email: '',
-    password: '',
-    languageId: '',
-    countryId: '',
-    districtId: '',
-    tribeEthnicity: '',
-    hasSpeechImpairment: false,
-    speechConditionId: '',
-    speechConditionSeverity: 'mild' as const,
-    speechConditionNotes: '',
-    speechConditionResearchConsent: false,
-  })
+  const [formData, setFormData] = useState<SignupDraft['formData']>(() => initialDraft?.formData ?? DEFAULT_FORM_DATA)
   const [countries, setCountries] = useState<Country[]>([])
   const [districts, setDistricts] = useState<District[]>([])
   const [languages, setLanguages] = useState<Language[]>([])
   const [consents, setConsents] = useState<ConsentDocument[]>([])
   const [speechConditions, setSpeechConditions] = useState<SpeechCondition[]>([])
-  const [acceptedConsentIds, setAcceptedConsentIds] = useState<string[]>(() => loadSignupDraft()?.acceptedConsentIds ?? [])
+  const [acceptedConsentIds, setAcceptedConsentIds] = useState<string[]>(() => initialDraft?.acceptedConsentIds ?? [])
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
-    const draft = loadSignupDraft()
-    if (!draft) {
+    if (!initialDraft) {
       return
     }
 
-    setStep(draft.step)
-    setFormData(draft.formData)
-    setAcceptedConsentIds(draft.acceptedConsentIds)
-  }, [])
+    setStep(initialDraft.step)
+    setFormData(initialDraft.formData)
+    setAcceptedConsentIds(initialDraft.acceptedConsentIds)
+  }, [initialDraft])
 
   useEffect(() => {
     const loadReferenceData = async () => {
@@ -442,12 +477,11 @@ export default function SignUpPage() {
                     <div className="grid gap-4 lg:grid-cols-2">
                       <div className="space-y-2">
                         <Label htmlFor="district" className="text-sm font-medium">District</Label>
-                        <Select value={formData.districtId} onValueChange={(value) => handleInputChange('districtId', value)}>
+                        <Select value={formData.districtId || undefined} onValueChange={(value) => handleInputChange('districtId', value)}>
                           <SelectTrigger className="border-border">
                             <SelectValue placeholder="Select a district" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">Not specified</SelectItem>
                             {filteredDistricts.map((district) => (
                               <SelectItem key={district.id} value={district.id}>{district.district_name}</SelectItem>
                             ))}

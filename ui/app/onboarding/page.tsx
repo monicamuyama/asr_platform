@@ -136,7 +136,19 @@ export default function OnboardingPage() {
   }
 
   if (isLoading) {
-    return <div className="min-h-screen bg-background" />
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4 py-12">
+        <Card className="w-full max-w-md border-border">
+          <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
+            <div className="space-y-1">
+              <p className="font-medium text-foreground">Loading your onboarding profile</p>
+              <p className="text-sm text-muted-foreground">Preparing your language and contribution settings...</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (

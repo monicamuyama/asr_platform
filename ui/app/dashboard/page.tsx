@@ -54,6 +54,7 @@ export default function CorpusWeaveDashboard() {
   const [communityQueue, setCommunityQueue] = useState<CommunityQueueItem[]>([])
   const [submissions, setSubmissions] = useState<SubmissionResponse[]>([])
   const [ratingHistory, setRatingHistory] = useState<RatingHistoryItem[]>([])
+  const [targetLanguageId, setTargetLanguageId] = useState('')
   const [selectedQueueSubmissionId, setSelectedQueueSubmissionId] = useState('')
   const [selectedRating, setSelectedRating] = useState(3)
   const [validationScores, setValidationScores] = useState({
@@ -157,6 +158,13 @@ export default function CorpusWeaveDashboard() {
         setLanguages(languageData)
         setConsents(consentData)
 
+        const initialTargetLanguageId =
+          languageData.find((language) => language.language_name === profileData.primary_language)?.id
+          ?? languageData.find((language) => language.id === languagePrefData.find((preference) => preference.is_primary_language)?.language_id)?.id
+          ?? languageData[0]?.id
+          ?? ''
+        setTargetLanguageId((current) => current || initialTargetLanguageId)
+
         await Promise.all([refreshCommunityQueue(), refreshSubmissions(), refreshRatingHistory(userId), refreshWallet(userId)])
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to load your dashboard from backend.'
@@ -205,6 +213,11 @@ export default function CorpusWeaveDashboard() {
   const primaryLanguageInfo =
     languages.find((language) => language.id === primaryLanguagePreference?.language_id)
     ?? languages.find((language) => language.language_name === userLanguage)
+    ?? null
+  const selectedTargetLanguage =
+    languages.find((language) => language.id === targetLanguageId)
+    ?? primaryLanguageInfo
+    ?? languages[0]
     ?? null
   const ratedSubmissionIds = useMemo(
     () => new Set(ratingHistory.map((item) => item.submission_id)),
@@ -347,8 +360,8 @@ export default function CorpusWeaveDashboard() {
       return
     }
 
-    if (!primaryLanguageInfo) {
-      setRecordingError('Could not load your primary language profile. Update your language in Settings and try again.')
+    if (!selectedTargetLanguage) {
+      setRecordingError('Could not load a target language. Update your language in Settings and try again.')
       return
     }
 
@@ -364,7 +377,7 @@ export default function CorpusWeaveDashboard() {
     try {
       const submission = await createSubmission({
         contributor_id: sessionUserId,
-        language_code: primaryLanguageInfo.iso_code,
+        language_code: selectedTargetLanguage.iso_code,
         mode: 'recording',
         speaker_profile: speakerProfile,
         consent_version: activeConsentVersion,
@@ -593,6 +606,24 @@ export default function CorpusWeaveDashboard() {
                   <CardDescription>Contribute voice data in your language</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Target Language</Label>
+                    <Select
+                      value={targetLanguageId || undefined}
+                      onValueChange={setTargetLanguageId}
+                    >
+                      <SelectTrigger className="border-border">
+                        <SelectValue placeholder="Select a target language" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {languages.map((language) => (
+                          <SelectItem key={language.id} value={language.id}>
+                            {language.language_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="bg-muted/50 rounded-xl p-6 text-center space-y-4">
                     <p className="font-medium text-foreground">Sentence to record:</p>
                     <p className="text-lg text-foreground italic">
@@ -600,7 +631,7 @@ export default function CorpusWeaveDashboard() {
                     </p>
                   </div>
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{primaryLanguageInfo?.language_name ?? userLanguage}</span>
+                    <span>{selectedTargetLanguage?.language_name ?? primaryLanguageInfo?.language_name ?? userLanguage}</span>
                     <span>{recordingDuration}s</span>
                   </div>
                   <Button 
