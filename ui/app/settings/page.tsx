@@ -91,6 +91,14 @@ export default function SettingsPage() {
     void loadSettingsData()
   }, [router])
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const urlError = params.get('error')
+    if (urlError) {
+      setError(urlError)
+    }
+  }, [])
+
   const handleSave = async () => {
     const userId = getSessionUserId()
     if (!userId) {

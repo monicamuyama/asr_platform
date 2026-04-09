@@ -13,6 +13,7 @@ import {
   adminUpdateUserLanguageCapabilities,
   adminUpdateUserRole,
   getLanguages,
+  getUserById,
   listUsersForAdmin,
   type Language,
   type UserResponse,
@@ -48,6 +49,12 @@ export default function AdminPage() {
 
     const loadData = async () => {
       try {
+        const sessionUser = await getUserById(sessionId)
+        if (sessionUser.role !== 'admin') {
+          router.replace('/settings?error=Admin%20access%20required')
+          return
+        }
+
         const [userData, languageData] = await Promise.all([
           listUsersForAdmin(sessionId),
           getLanguages(),
