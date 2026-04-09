@@ -73,13 +73,15 @@ export default function CorpusWeaveDashboard() {
       const queueData = await getCommunityQueue()
       setCommunityQueue(queueData)
       setSelectedQueueSubmissionId((current) => {
-        if (preferredSubmissionId && queueData.some((item) => item.id === preferredSubmissionId)) {
+        const validationCandidates = queueData.filter((item) => item.contributor_id !== sessionUserId)
+
+        if (preferredSubmissionId && validationCandidates.some((item) => item.id === preferredSubmissionId)) {
           return preferredSubmissionId
         }
-        if (current && queueData.some((item) => item.id === current)) {
+        if (current && validationCandidates.some((item) => item.id === current)) {
           return current
         }
-        return queueData[0]?.id || ''
+        return validationCandidates[0]?.id || ''
       })
     } catch {
       setCommunityQueue([])
@@ -183,7 +185,11 @@ export default function CorpusWeaveDashboard() {
     languages.find((language) => language.id === primaryLanguagePreference?.language_id)
     ?? languages.find((language) => language.language_name === userLanguage)
     ?? null
-  const selectedValidationSubmission = communityQueue.find((item) => item.id === selectedQueueSubmissionId) ?? communityQueue[0] ?? null
+  const validationQueue = useMemo(
+    () => communityQueue.filter((item) => item.contributor_id !== sessionUserId),
+    [communityQueue, sessionUserId],
+  )
+  const selectedValidationSubmission = validationQueue.find((item) => item.id === selectedQueueSubmissionId) ?? validationQueue[0] ?? null
   const speakerProfile = profile?.has_speech_impairment
     ? profile.impairment_type ?? 'speech_impairment'
     : 'healthy_speaker'
@@ -205,17 +211,17 @@ export default function CorpusWeaveDashboard() {
   )
 
   const activeTasks = useMemo(() => {
-    return communityQueue
-      .filter((item) => item.contributor_id !== sessionUserId)
+    return validationQueue
       .slice(0, 6)
-      .map((item, index) => ({
-        id: index + 1,
+      .map((item) => ({
+        id: item.id,
+        submissionId: item.id,
         type: 'validate',
         title: item.target_word ?? item.read_prompt ?? 'Validate community recording',
         language: item.language_code,
         reward: `${Math.max(5, 15 - item.ratings_count)} pts`,
       }))
-  }, [communityQueue, sessionUserId])
+  }, [validationQueue])
 
   const recentActivity = useMemo(() => {
     const mySubmissions = submissions
@@ -498,7 +504,16 @@ export default function CorpusWeaveDashboard() {
                       </div>
                       <p className="font-medium text-foreground mb-2">{task.title}</p>
                       <p className="text-sm text-muted-foreground mb-4">{task.language}</p>
-                      <Button className="w-full bg-primary hover:bg-primary/90">Start Task</Button>
+                      <Button
+                        className="w-full bg-primary hover:bg-primary/90"
+                        onClick={() => {
+                          setActiveTab('contribute')
+                          setSelectedQueueSubmissionId(task.submissionId)
+                          setValidationMessage('')
+                        }}
+                      >
+                        Start Task
+                      </Button>
                     </CardContent>
                   </Card>
                 ))}
@@ -600,12 +615,15 @@ export default function CorpusWeaveDashboard() {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Submission ID</Label>
-                    <Select value={selectedQueueSubmissionId} onValueChange={setSelectedQueueSubmissionId}>
+                    <Select
+                      value={validationQueue.some((item) => item.id === selectedQueueSubmissionId) ? selectedQueueSubmissionId : ''}
+                      onValueChange={setSelectedQueueSubmissionId}
+                    >
                       <SelectTrigger className="border-border">
                         <SelectValue placeholder="Select a submission" />
                       </SelectTrigger>
                       <SelectContent>
-                        {communityQueue.map((item) => (
+                        {validationQueue.map((item) => (
                           <SelectItem key={item.id} value={item.id}>
                             {item.language_code} · {item.mode} · {item.id.slice(0, 8)}
                           </SelectItem>
@@ -628,7 +646,9 @@ export default function CorpusWeaveDashboard() {
                     ) : (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Volume2 className="h-4 w-4" />
-                        No audio attached to this submission.
+                        {validationQueue.length === 0
+                          ? 'No community submissions from other contributors are available right now.'
+                          : 'No audio attached to this submission.'}
                       </div>
                     )}
                   </div>
