@@ -225,6 +225,10 @@ export function getCommunityQueue(): Promise<CommunityQueueItem[]> {
   return fetchJson<CommunityQueueItem[]>(`/submissions/queue`);
 }
 
+export function getSubmissions(): Promise<SubmissionResponse[]> {
+  return fetchJson<SubmissionResponse[]>(`/submissions`);
+}
+
 export async function createSubmission(payload: SubmissionCreateRequest): Promise<SubmissionResponse> {
   const response = await fetch(`${API_BASE}/submissions`, {
     method: 'POST',
