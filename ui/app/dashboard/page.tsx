@@ -34,6 +34,7 @@ import { clearSession, getSessionUserId } from '@/lib/auth'
 
 export default function CorpusWeaveDashboard() {
   const router = useRouter()
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('dashboard')
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
@@ -67,22 +68,29 @@ export default function CorpusWeaveDashboard() {
   useEffect(() => {
     const userId = getSessionUserId()
     if (!userId) {
+      setIsLoading(false)
       router.replace('/signin')
       return
     }
+    setSessionUserId(userId)
 
     const loadDashboardData = async () => {
       setIsLoading(true)
       setError('')
+
+      const loadingGuard = window.setTimeout(() => {
+        setError('Dashboard is taking too long to load. Please confirm the API server is running, then refresh.')
+        setIsLoading(false)
+      }, 10000)
+
       try {
-        const [userData, profileData, walletData, languagePrefData, languageData, consentData, queueData] = await Promise.all([
+        const [userData, profileData, walletData, languagePrefData, languageData, consentData] = await Promise.all([
           getUserById(userId),
           getUserProfileById(userId),
           getUserWalletById(userId),
           getUserLanguagePreferencesById(userId),
           getLanguages(),
           getConsentDocuments(),
-          getCommunityQueue(),
         ])
         if (!userData.onboarding_completed) {
           router.replace('/onboarding')
@@ -94,8 +102,15 @@ export default function CorpusWeaveDashboard() {
         setLanguagePreferences(languagePrefData)
         setLanguages(languageData)
         setConsents(consentData)
-        setCommunityQueue(queueData)
-        setSelectedQueueSubmissionId((current) => current || queueData[0]?.id || '')
+
+        try {
+          const queueData = await getCommunityQueue()
+          setCommunityQueue(queueData)
+          setSelectedQueueSubmissionId((current) => current || queueData[0]?.id || '')
+        } catch {
+          setCommunityQueue([])
+          setSelectedQueueSubmissionId('')
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to load your dashboard from backend.'
         const shouldResetSession = /user not found|invalid|unauthorized|forbidden|401|403/i.test(message)
@@ -106,6 +121,7 @@ export default function CorpusWeaveDashboard() {
         }
         setError(message)
       } finally {
+        window.clearTimeout(loadingGuard)
         setIsLoading(false)
       }
     }
@@ -147,7 +163,6 @@ export default function CorpusWeaveDashboard() {
   const speakerProfile = profile?.has_speech_impairment
     ? profile.impairment_type ?? 'speech_impairment'
     : 'healthy_speaker'
-  const userId = getSessionUserId()
 
   const userStats = useMemo(
     () => [
@@ -230,8 +245,14 @@ export default function CorpusWeaveDashboard() {
   }
 
   const submitRecording = async () => {
-    if (!userId || !primaryLanguageInfo) {
-      setRecordingError('Please sign in and load your language profile first.')
+    if (!sessionUserId) {
+      clearSession()
+      router.replace('/signin')
+      return
+    }
+
+    if (!primaryLanguageInfo) {
+      setRecordingError('Could not load your primary language profile. Update your language in Settings and try again.')
       return
     }
 
@@ -246,7 +267,7 @@ export default function CorpusWeaveDashboard() {
 
     try {
       const submission = await createSubmission({
-        contributor_id: userId,
+        contributor_id: sessionUserId,
         language_code: primaryLanguageInfo.iso_code,
         mode: 'recording',
         speaker_profile: speakerProfile,
@@ -275,14 +296,25 @@ export default function CorpusWeaveDashboard() {
       setRecordedAudioDataUrl(null)
       setRecordingDuration(0)
     } catch (err) {
-      setRecordingError(err instanceof Error ? err.message : 'Failed to submit recording.')
+      const message = err instanceof Error ? err.message : 'Failed to submit recording.'
+      if (/404/i.test(message) || /not found/i.test(message)) {
+        setRecordingError('Submission endpoint is unavailable (404). Ensure backend routes include /submissions and the API server is restarted.')
+      } else {
+        setRecordingError(message)
+      }
     } finally {
       setIsSubmittingRecording(false)
     }
   }
 
   const submitValidation = async () => {
-    if (!userId || !selectedValidationSubmission) {
+    if (!sessionUserId) {
+      clearSession()
+      router.replace('/signin')
+      return
+    }
+
+    if (!selectedValidationSubmission) {
       setValidationMessage('Load a community submission first.')
       return
     }
@@ -292,7 +324,7 @@ export default function CorpusWeaveDashboard() {
     try {
       const result = await createCommunityRating(selectedValidationSubmission.id, {
         submission_id: selectedValidationSubmission.id,
-        rater_id: userId,
+        rater_id: sessionUserId,
         intelligibility: validationScores.intelligibility,
         recording_quality: validationScores.recordingQuality,
         elicitation_compliance: validationScores.compliance,
@@ -308,7 +340,17 @@ export default function CorpusWeaveDashboard() {
   }
 
   if (isLoading) {
-    return <div className="min-h-screen bg-background" />
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="text-center space-y-3">
+          <p className="text-foreground font-medium">Loading your dashboard...</p>
+          <p className="text-sm text-muted-foreground">If this takes too long, check that the API is running on port 8000.</p>
+          <Link href="/signin">
+            <Button variant="outline" className="border-border">Go to Sign in</Button>
+          </Link>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -316,18 +358,18 @@ export default function CorpusWeaveDashboard() {
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-teal font-bold text-white">
                 CW
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-foreground">CorpusWeave</h1>
-                <p className="text-xs text-muted-foreground">Community Speech Data Platform</p>
+              <div className="min-w-0">
+                <h1 className="truncate text-xl font-bold text-foreground sm:text-2xl">CorpusWeave</h1>
+                <p className="truncate text-xs text-muted-foreground">Community Speech Data Platform</p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="hidden sm:flex items-center gap-2 text-sm">
+            <div className="flex w-full items-center justify-end gap-2 sm:w-auto sm:gap-3">
+              <div className="hidden lg:flex items-center gap-2 text-sm">
                 <span className="text-foreground">Welcome, <strong>{userName}</strong></span>
                 <Badge variant="outline" className="ml-2">{userLanguage}</Badge>
               </div>
@@ -354,7 +396,7 @@ export default function CorpusWeaveDashboard() {
         {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
         {/* Tabs Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-8">
+          <TabsList className="mb-8 grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="contribute">Contribute</TabsTrigger>
             <TabsTrigger value="rewards">Rewards</TabsTrigger>
@@ -363,11 +405,11 @@ export default function CorpusWeaveDashboard() {
 
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-8">
-            <div className="rounded-2xl bg-gradient-to-r from-primary/10 via-transparent to-accent-teal/10 p-8 border border-border">
-              <h2 className="text-3xl font-bold tracking-tight text-foreground mb-2">
+            <div className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-transparent to-accent-teal/10 p-6 sm:p-8">
+              <h2 className="mb-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
                 Build Inclusive Speech Data
               </h2>
-              <p className="text-lg text-muted-foreground">
+              <p className="text-base text-muted-foreground sm:text-lg">
                 Record, validate, and transcribe speech across multiple languages. Earn points while supporting language diversity.
               </p>
             </div>

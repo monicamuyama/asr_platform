@@ -14,18 +14,30 @@ from isdr_api.database import Base, SessionLocal, engine
 def _ensure_runtime_schema() -> None:
     inspector = inspect(engine)
     user_columns = {column["name"] for column in inspector.get_columns("users")}
-    if "onboarding_completed" in user_columns:
-        return
+    submission_columns = {column["name"] for column in inspector.get_columns("submissions")}
 
     with engine.begin() as connection:
-        if engine.dialect.name == "sqlite":
-            connection.execute(
-                text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT 0")
-            )
-        else:
-            connection.execute(
-                text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT false")
-            )
+        if "onboarding_completed" not in user_columns:
+            if engine.dialect.name == "sqlite":
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT 0")
+                )
+            else:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT false")
+                )
+
+        missing_submission_columns = [
+            ("target_word", "TEXT"),
+            ("read_prompt", "TEXT"),
+            ("image_prompt_url", "TEXT"),
+            ("spontaneous_instruction", "TEXT"),
+        ]
+        for column_name, column_type in missing_submission_columns:
+            if column_name not in submission_columns:
+                connection.execute(
+                    text(f"ALTER TABLE submissions ADD COLUMN {column_name} {column_type}")
+                )
 
 
 def _seed_reference_data(db: Session) -> None:
@@ -172,6 +184,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-from isdr_api.routers import auth
+from isdr_api.routers import auth, submissions
 
 app.include_router(auth.router)
+app.include_router(submissions.router)

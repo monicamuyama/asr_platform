@@ -4,9 +4,11 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 
-from .database import Base
+# Keep legacy submission/governance models isolated from the extended schema metadata.
+# This avoids duplicate table registration for overlapping table names.
+Base = declarative_base()
 
 
 def _uuid() -> str:
