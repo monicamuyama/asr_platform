@@ -118,6 +118,14 @@ class RatingResultSchema(BaseModel):
     reason: str
 
 
+class RatingHistoryItemSchema(BaseModel):
+    submission_id: str
+    language_code: str
+    mode: str
+    submission_status: str
+    created_at: datetime
+
+
 # ---------------------------------------------------------------------------
 # Expert validation
 # ---------------------------------------------------------------------------

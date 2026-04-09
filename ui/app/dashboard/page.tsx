@@ -18,6 +18,7 @@ import {
   getCommunityQueue,
   getConsentDocuments,
   getLanguages,
+  getRatingsByUser,
   getSubmissions,
   getUserById,
   getUserLanguagePreferencesById,
@@ -26,6 +27,7 @@ import {
   type CommunityQueueItem,
   type ConsentDocument,
   type Language,
+  type RatingHistoryItem,
   type SubmissionResponse,
   type UserLanguagePreferenceResponse,
   type UserProfileResponse,
@@ -51,6 +53,7 @@ export default function CorpusWeaveDashboard() {
   const [consents, setConsents] = useState<ConsentDocument[]>([])
   const [communityQueue, setCommunityQueue] = useState<CommunityQueueItem[]>([])
   const [submissions, setSubmissions] = useState<SubmissionResponse[]>([])
+  const [ratingHistory, setRatingHistory] = useState<RatingHistoryItem[]>([])
   const [selectedQueueSubmissionId, setSelectedQueueSubmissionId] = useState('')
   const [selectedRating, setSelectedRating] = useState(3)
   const [validationScores, setValidationScores] = useState({
@@ -98,6 +101,24 @@ export default function CorpusWeaveDashboard() {
     }
   }
 
+  const refreshWallet = async (userId: string) => {
+    try {
+      const data = await getUserWalletById(userId)
+      setWallet(data)
+    } catch {
+      setWallet(null)
+    }
+  }
+
+  const refreshRatingHistory = async (userId: string) => {
+    try {
+      const data = await getRatingsByUser(userId)
+      setRatingHistory(data)
+    } catch {
+      setRatingHistory([])
+    }
+  }
+
   useEffect(() => {
     const userId = getSessionUserId()
     if (!userId) {
@@ -136,7 +157,7 @@ export default function CorpusWeaveDashboard() {
         setLanguages(languageData)
         setConsents(consentData)
 
-        await Promise.all([refreshCommunityQueue(), refreshSubmissions()])
+        await Promise.all([refreshCommunityQueue(), refreshSubmissions(), refreshRatingHistory(userId), refreshWallet(userId)])
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to load your dashboard from backend.'
         const shouldResetSession = /user not found|invalid|unauthorized|forbidden|401|403/i.test(message)
@@ -185,9 +206,14 @@ export default function CorpusWeaveDashboard() {
     languages.find((language) => language.id === primaryLanguagePreference?.language_id)
     ?? languages.find((language) => language.language_name === userLanguage)
     ?? null
+  const ratedSubmissionIds = useMemo(
+    () => new Set(ratingHistory.map((item) => item.submission_id)),
+    [ratingHistory],
+  )
+
   const validationQueue = useMemo(
-    () => communityQueue.filter((item) => item.contributor_id !== sessionUserId),
-    [communityQueue, sessionUserId],
+    () => communityQueue.filter((item) => item.contributor_id !== sessionUserId && !ratedSubmissionIds.has(item.id)),
+    [communityQueue, ratedSubmissionIds, sessionUserId],
   )
   const selectedValidationSubmission = validationQueue.find((item) => item.id === selectedQueueSubmissionId) ?? validationQueue[0] ?? null
   const speakerProfile = profile?.has_speech_impairment
@@ -203,11 +229,11 @@ export default function CorpusWeaveDashboard() {
   const userStats = useMemo(
     () => [
       { label: 'Recordings', value: String(submissions.filter((item) => item.contributor_id === sessionUserId).length), icon: Mic },
-      { label: 'Validations', value: '-', icon: Headphones },
+      { label: 'Validations', value: String(ratingHistory.length), icon: Headphones },
       { label: 'Transcriptions', value: '-', icon: FileText },
       { label: 'Points Earned', value: wallet ? wallet.balance.toFixed(2) : '0.00', icon: Trophy },
     ],
-    [sessionUserId, submissions, wallet],
+    [ratingHistory.length, sessionUserId, submissions, wallet],
   )
 
   const activeTasks = useMemo(() => {
@@ -226,15 +252,25 @@ export default function CorpusWeaveDashboard() {
   const recentActivity = useMemo(() => {
     const mySubmissions = submissions
       .filter((item) => item.contributor_id === sessionUserId)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, 5)
+      .map((item) => ({
+        dateValue: new Date(item.created_at),
+        date: new Date(item.created_at).toLocaleDateString(),
+        action: `Submitted ${item.mode} (${item.language_code})`,
+        reward: item.status,
+      }))
 
-    return mySubmissions.map((item) => ({
+    const myRatings = ratingHistory.map((item) => ({
+      dateValue: new Date(item.created_at),
       date: new Date(item.created_at).toLocaleDateString(),
-      action: `Submitted ${item.mode} (${item.language_code})`,
-      reward: item.status,
+      action: `Validated ${item.mode} (${item.language_code})`,
+      reward: item.submission_status,
     }))
-  }, [sessionUserId, submissions])
+
+    return [...mySubmissions, ...myRatings]
+      .sort((a, b) => b.dateValue.getTime() - a.dateValue.getTime())
+      .slice(0, 8)
+      .map(({ date, action, reward }) => ({ date, action, reward }))
+  }, [ratingHistory, sessionUserId, submissions])
 
   const topContributors: Array<{ name: string; points: string; recordings: number; rating: number }> = []
 
@@ -338,7 +374,7 @@ export default function CorpusWeaveDashboard() {
       })
 
       setSubmissionMessage(`Recording submitted as ${submission.id}`)
-      await Promise.all([refreshCommunityQueue(submission.id), refreshSubmissions()])
+      await Promise.all([refreshCommunityQueue(submission.id), refreshSubmissions(), refreshRatingHistory(sessionUserId), refreshWallet(sessionUserId)])
       stopRecording()
       setRecordedAudioUrl(null)
       setRecordedAudioDataUrl(null)
@@ -347,6 +383,8 @@ export default function CorpusWeaveDashboard() {
       const message = err instanceof Error ? err.message : 'Failed to submit recording.'
       if (/404/i.test(message) || /not found/i.test(message)) {
         setRecordingError('Submission endpoint is unavailable (404). Ensure backend routes include /submissions and the API server is restarted.')
+      } else if (/already submitted a recording for this sentence/i.test(message)) {
+        setRecordingError('You already submitted this sentence. Please record a different prompt.')
       } else {
         setRecordingError(message)
       }
@@ -379,7 +417,7 @@ export default function CorpusWeaveDashboard() {
       })
 
       setValidationMessage(`Saved rating. Submission is now ${result.status}.`)
-      await Promise.all([refreshCommunityQueue(), refreshSubmissions()])
+      await Promise.all([refreshCommunityQueue(), refreshSubmissions(), refreshRatingHistory(sessionUserId), refreshWallet(sessionUserId)])
       setSelectedRating(validationScores.intelligibility)
     } catch (err) {
       setValidationMessage(err instanceof Error ? err.message : 'Failed to submit rating.')

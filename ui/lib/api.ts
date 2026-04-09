@@ -127,6 +127,14 @@ export type RatingResult = {
   reason: string;
 };
 
+export type RatingHistoryItem = {
+  submission_id: string;
+  language_code: string;
+  mode: string;
+  submission_status: string;
+  created_at: string;
+};
+
 export type SubmissionCreateRequest = {
   contributor_id: string;
   language_code: string;
@@ -227,6 +235,10 @@ export function getCommunityQueue(): Promise<CommunityQueueItem[]> {
 
 export function getSubmissions(): Promise<SubmissionResponse[]> {
   return fetchJson<SubmissionResponse[]>(`/submissions`);
+}
+
+export function getRatingsByUser(raterId: string): Promise<RatingHistoryItem[]> {
+  return fetchJson<RatingHistoryItem[]>(`/submissions/ratings/by/${encodeURIComponent(raterId)}`);
 }
 
 export async function createSubmission(payload: SubmissionCreateRequest): Promise<SubmissionResponse> {

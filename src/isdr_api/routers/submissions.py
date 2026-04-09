@@ -9,11 +9,39 @@ from sqlalchemy.orm import Session
 
 from isdr_api.database import get_db
 from isdr_api.db_models import CommunityRating, GovernanceParam, Submission
-from isdr_api.schemas import QueueItemSchema, RatingCreate, RatingResultSchema, SubmissionCreate, SubmissionSchema
+from isdr_api.db_models_extended import Wallet
+from isdr_api.schemas import (
+    QueueItemSchema,
+    RatingCreate,
+    RatingHistoryItemSchema,
+    RatingResultSchema,
+    SubmissionCreate,
+    SubmissionSchema,
+)
 from isdr_core.models import CommunityRating as RoutingCommunityRating, GovernanceParams
 from isdr_core.routing import route_submission
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
+
+REWARD_PER_RECORDING = 10.0
+REWARD_PER_VALIDATION = 3.0
+
+
+def _normalize_sentence(value: str | None) -> str:
+    if value is None:
+        return ""
+    return " ".join(value.split()).strip().lower()
+
+
+def _credit_wallet(db: Session, user_id: str, amount: float) -> None:
+    wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+    if wallet is None:
+        wallet = Wallet(user_id=user_id, balance=0.0, currency="USD")
+        db.add(wallet)
+        db.flush()
+
+    wallet.balance = float(wallet.balance) + amount
+    wallet.last_updated = datetime.now(timezone.utc)
 
 
 def _get_active_governance_params(db: Session) -> GovernanceParams:
@@ -72,6 +100,26 @@ def _route_submission(submission_id: str, db: Session) -> RatingResultSchema:
 
 @router.post("", response_model=SubmissionSchema)
 def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) -> Submission:
+    if payload.mode == "recording":
+        normalized_target = _normalize_sentence(payload.target_word)
+        existing_recordings = (
+            db.query(Submission)
+            .filter(
+                Submission.contributor_id == payload.contributor_id,
+                Submission.mode == "recording",
+            )
+            .all()
+        )
+        duplicate_exists = any(
+            _normalize_sentence(existing.target_word) == normalized_target
+            for existing in existing_recordings
+        )
+        if duplicate_exists:
+            raise HTTPException(
+                status_code=400,
+                detail="You have already submitted a recording for this sentence.",
+            )
+
     submission = Submission(
         id=str(uuid.uuid4()),
         contributor_id=payload.contributor_id,
@@ -90,6 +138,7 @@ def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) 
         created_at=datetime.now(timezone.utc),
     )
     db.add(submission)
+    _credit_wallet(db, payload.contributor_id, REWARD_PER_RECORDING)
     db.commit()
     db.refresh(submission)
     return submission
@@ -163,11 +212,34 @@ def create_community_rating(submission_id: str, payload: RatingCreate, db: Sessi
         created_at=datetime.now(timezone.utc),
     )
     db.add(rating)
+    _credit_wallet(db, payload.rater_id, REWARD_PER_VALIDATION)
     db.flush()
 
     result = _route_submission(submission_id, db)
     db.commit()
     return result
+
+
+@router.get("/ratings/by/{rater_id}", response_model=list[RatingHistoryItemSchema])
+def list_ratings_by_rater(rater_id: str, db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    rows = (
+        db.query(CommunityRating, Submission)
+        .join(Submission, CommunityRating.submission_id == Submission.id)
+        .filter(CommunityRating.rater_id == rater_id)
+        .order_by(CommunityRating.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "submission_id": submission.id,
+            "language_code": submission.language_code,
+            "mode": submission.mode,
+            "submission_status": submission.status,
+            "created_at": rating.created_at,
+        }
+        for rating, submission in rows
+    ]
 
 
 @router.get("/{submission_id}", response_model=SubmissionSchema)
