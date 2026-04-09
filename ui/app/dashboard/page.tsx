@@ -65,6 +65,25 @@ export default function CorpusWeaveDashboard() {
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<number | null>(null)
 
+  const refreshCommunityQueue = async (preferredSubmissionId?: string) => {
+    try {
+      const queueData = await getCommunityQueue()
+      setCommunityQueue(queueData)
+      setSelectedQueueSubmissionId((current) => {
+        if (preferredSubmissionId && queueData.some((item) => item.id === preferredSubmissionId)) {
+          return preferredSubmissionId
+        }
+        if (current && queueData.some((item) => item.id === current)) {
+          return current
+        }
+        return queueData[0]?.id || ''
+      })
+    } catch {
+      setCommunityQueue([])
+      setSelectedQueueSubmissionId('')
+    }
+  }
+
   useEffect(() => {
     const userId = getSessionUserId()
     if (!userId) {
@@ -103,14 +122,7 @@ export default function CorpusWeaveDashboard() {
         setLanguages(languageData)
         setConsents(consentData)
 
-        try {
-          const queueData = await getCommunityQueue()
-          setCommunityQueue(queueData)
-          setSelectedQueueSubmissionId((current) => current || queueData[0]?.id || '')
-        } catch {
-          setCommunityQueue([])
-          setSelectedQueueSubmissionId('')
-        }
+        await refreshCommunityQueue()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to load your dashboard from backend.'
         const shouldResetSession = /user not found|invalid|unauthorized|forbidden|401|403/i.test(message)
@@ -278,19 +290,7 @@ export default function CorpusWeaveDashboard() {
       })
 
       setSubmissionMessage(`Recording submitted as ${submission.id}`)
-      setCommunityQueue((current) => [
-        {
-          id: submission.id,
-          contributor_id: submission.contributor_id,
-          language_code: submission.language_code,
-          mode: submission.mode,
-          speaker_profile: submission.speaker_profile,
-          status: submission.status,
-          ratings_count: 0,
-        },
-        ...current,
-      ])
-      setSelectedQueueSubmissionId(submission.id)
+      await refreshCommunityQueue(submission.id)
       stopRecording()
       setRecordedAudioUrl(null)
       setRecordedAudioDataUrl(null)
@@ -331,8 +331,7 @@ export default function CorpusWeaveDashboard() {
       })
 
       setValidationMessage(`Saved rating. Submission is now ${result.status}.`)
-      setCommunityQueue((current) => current.filter((item) => item.id !== selectedValidationSubmission.id))
-      setSelectedQueueSubmissionId('')
+      await refreshCommunityQueue()
       setSelectedRating(validationScores.intelligibility)
     } catch (err) {
       setValidationMessage(err instanceof Error ? err.message : 'Failed to submit rating.')
