@@ -101,6 +101,11 @@ class QueueItemSchema(BaseModel):
     language_code: str
     mode: str
     speaker_profile: str
+    target_word: Optional[str] = None
+    read_prompt: Optional[str] = None
+    image_prompt_url: Optional[str] = None
+    spontaneous_instruction: Optional[str] = None
+    audio_url: Optional[str] = None
     status: str
     ratings_count: int
 

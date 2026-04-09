@@ -175,6 +175,12 @@ export default function CorpusWeaveDashboard() {
   const speakerProfile = profile?.has_speech_impairment
     ? profile.impairment_type ?? 'speech_impairment'
     : 'healthy_speaker'
+  const validationPrompt = selectedValidationSubmission
+    ? selectedValidationSubmission.read_prompt
+      ?? selectedValidationSubmission.target_word
+      ?? selectedValidationSubmission.spontaneous_instruction
+      ?? 'No prompt provided for this submission.'
+    : 'No queue items available'
 
   const userStats = useMemo(
     () => [
@@ -571,13 +577,24 @@ export default function CorpusWeaveDashboard() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="bg-muted/50 rounded-xl p-4 flex items-center justify-center">
-                    <div className="text-center">
-                      <Play className="h-8 w-8 text-primary mx-auto" />
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        {selectedValidationSubmission ? `${selectedValidationSubmission.status} · ${selectedValidationSubmission.ratings_count} ratings` : 'No queue items available'}
-                      </p>
+                  <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Validation prompt</p>
+                        <p className="text-sm font-medium text-foreground">{validationPrompt}</p>
+                      </div>
+                      <Badge variant="outline" className="border-border text-xs">
+                        {selectedValidationSubmission ? `${selectedValidationSubmission.status} · ${selectedValidationSubmission.ratings_count} ratings` : 'No queue items'}
+                      </Badge>
                     </div>
+                    {selectedValidationSubmission?.audio_url ? (
+                      <audio controls className="w-full" src={selectedValidationSubmission.audio_url} />
+                    ) : (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Volume2 className="h-4 w-4" />
+                        No audio attached to this submission.
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Quality Rating</Label>

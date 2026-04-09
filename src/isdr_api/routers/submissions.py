@@ -115,6 +115,11 @@ def list_community_queue(db: Session = Depends(get_db)) -> list[dict[str, object
             "language_code": submission.language_code,
             "mode": submission.mode,
             "speaker_profile": submission.speaker_profile,
+            "target_word": submission.target_word,
+            "read_prompt": submission.read_prompt,
+            "image_prompt_url": submission.image_prompt_url,
+            "spontaneous_instruction": submission.spontaneous_instruction,
+            "audio_url": submission.audio_url,
             "status": submission.status,
             "ratings_count": len(submission.community_ratings),
         }

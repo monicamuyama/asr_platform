@@ -110,6 +110,11 @@ export type CommunityQueueItem = {
   language_code: string;
   mode: string;
   speaker_profile: string;
+  target_word: string | null;
+  read_prompt: string | null;
+  image_prompt_url: string | null;
+  spontaneous_instruction: string | null;
+  audio_url: string | null;
   status: string;
   ratings_count: number;
 };
