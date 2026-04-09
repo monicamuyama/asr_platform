@@ -12,6 +12,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from isdr_api.database import Base, get_db
+from isdr_api.db_models import Base as LegacyBase
+from isdr_api.db_models_extended import Language, User, UserLanguagePreference
 from isdr_api.main import app
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -38,7 +40,9 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def fresh_db():
     Base.metadata.create_all(bind=test_engine)
+    LegacyBase.metadata.create_all(bind=test_engine)
     yield
+    LegacyBase.metadata.drop_all(bind=test_engine)
     Base.metadata.drop_all(bind=test_engine)
 
 
@@ -121,6 +125,66 @@ def _create_submission(overrides: dict | None = None) -> dict:
     return response.json()
 
 
+def _seed_transcription_user(
+    user_id: str,
+    *,
+    role: str = "contributor",
+    can_transcribe: bool = False,
+    can_validate: bool = False,
+    language_iso: str = "LG",
+) -> None:
+    db = TestingSessionLocal()
+    try:
+        language = db.query(Language).filter(Language.iso_code == language_iso).first()
+        if language is None:
+            language = Language(language_name=language_iso, iso_code=language_iso, is_low_resource=True)
+            db.add(language)
+            db.flush()
+
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            user = User(
+                id=user_id,
+                full_name=f"{user_id} Tester",
+                email=f"{user_id}@example.com",
+                role=role,
+                auth_provider="local",
+                is_verified=True,
+                onboarding_completed=True,
+            )
+            db.add(user)
+            db.flush()
+        else:
+            user.role = role
+
+        preference = (
+            db.query(UserLanguagePreference)
+            .filter(
+                UserLanguagePreference.user_id == user_id,
+                UserLanguagePreference.language_id == language.id,
+            )
+            .first()
+        )
+        if preference is None:
+            preference = UserLanguagePreference(
+                user_id=user_id,
+                language_id=language.id,
+                is_primary_language=True,
+                can_record=True,
+                can_transcribe=can_transcribe,
+                can_validate=can_validate,
+                proficiency_level="native",
+            )
+            db.add(preference)
+        else:
+            preference.can_transcribe = can_transcribe
+            preference.can_validate = can_validate
+
+        db.commit()
+    finally:
+        db.close()
+
+
 def test_create_submission_defaults_to_pending_community():
     data = _create_submission()
     assert data["status"] == "PENDING_COMMUNITY"
@@ -179,6 +243,190 @@ def test_spontaneous_image_submission_requires_image_fields():
         },
     )
     assert response.status_code == 422
+
+
+def test_audio_submission_enters_transcription_queue():
+    _seed_transcription_user("c_audio", can_transcribe=True, can_validate=True)
+
+    response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_audio",
+            "language_code": "lg",
+            "mode": "recording",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "target_word": "The river bends but does not break",
+            "audio_url": "data:audio/webm;base64,AAAA",
+            "category": "proverb",
+        },
+    )
+    assert response.status_code == 200
+
+    queue_response = client.get("/transcription/queue")
+    assert queue_response.status_code == 200
+    queue = queue_response.json()
+    assert len(queue) == 1
+    assert queue[0]["audio_url"] == "data:audio/webm;base64,AAAA"
+
+
+def test_transcription_validation_and_graduation_flow():
+    _seed_transcription_user("c_transcribe", can_transcribe=True, can_validate=True)
+    _seed_transcription_user("transcriber_01", can_transcribe=True, can_validate=False)
+    _seed_transcription_user("validator_01", can_transcribe=False, can_validate=True)
+    _seed_transcription_user("expert_01", role="expert", can_transcribe=False, can_validate=True)
+
+    submission = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_transcribe",
+            "language_code": "lg",
+            "mode": "recording",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "target_word": "Wisdom is found in many hearts",
+            "audio_url": "data:audio/webm;base64,BBBB",
+            "category": "proverb",
+        },
+    ).json()
+
+    queue_item = client.get("/transcription/queue").json()[0]
+    task_response = client.post(
+        "/transcription/tasks",
+        json={
+            "recording_id": queue_item["recording_id"],
+            "transcriber_id": "transcriber_01",
+            "transcribed_text": "Wisdom is found in many hearts",
+            "confidence_score": 0.96,
+        },
+    )
+    assert task_response.status_code == 200
+    task_id = task_response.json()["id"]
+
+    validation_response = client.post(
+        f"/transcription/tasks/{task_id}/validations",
+        json={
+            "transcription_id": task_id,
+            "validator_id": "validator_01",
+            "rating": 5,
+            "is_correct": True,
+            "deep_cultural_meaning": "The proverb emphasizes collective wisdom.",
+        },
+    )
+    assert validation_response.status_code == 200
+
+    graduate_response = client.post(
+        f"/transcription/tasks/{task_id}/graduate",
+        json={"expert_id": "expert_01"},
+    )
+    assert graduate_response.status_code == 200
+    assert graduate_response.json()["sentence_text"] == "Wisdom is found in many hearts"
+
+    prompt_bank = client.get("/transcription/prompt-bank")
+    assert prompt_bank.status_code == 200
+    assert any(item["sentence_text"] == "Wisdom is found in many hearts" for item in prompt_bank.json())
+
+
+def test_transcription_graduation_requires_expert_role():
+    _seed_transcription_user("c_role", can_transcribe=True, can_validate=True)
+    _seed_transcription_user("transcriber_role", can_transcribe=True, can_validate=False)
+    _seed_transcription_user("validator_role", can_transcribe=False, can_validate=True)
+    _seed_transcription_user("not_expert", role="contributor", can_transcribe=True, can_validate=True)
+
+    client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_role",
+            "language_code": "lg",
+            "mode": "recording",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "target_word": "The drumbeat carries memory",
+            "audio_url": "data:audio/webm;base64,CCCC",
+            "category": "proverb",
+        },
+    )
+
+    queue_item = client.get("/transcription/queue").json()[0]
+    task_id = client.post(
+        "/transcription/tasks",
+        json={
+            "recording_id": queue_item["recording_id"],
+            "transcriber_id": "transcriber_role",
+            "transcribed_text": "The drumbeat carries memory",
+            "confidence_score": 0.9,
+        },
+    ).json()["id"]
+
+    client.post(
+        f"/transcription/tasks/{task_id}/validations",
+        json={
+            "transcription_id": task_id,
+            "validator_id": "validator_role",
+            "rating": 5,
+            "is_correct": True,
+        },
+    )
+
+    forbidden = client.post(
+        f"/transcription/tasks/{task_id}/graduate",
+        json={"expert_id": "not_expert"},
+    )
+    assert forbidden.status_code == 403
+
+
+def test_admin_can_update_user_role():
+    _seed_transcription_user("admin_01", role="admin", can_transcribe=True, can_validate=True)
+    _seed_transcription_user("user_01", role="contributor", can_transcribe=False, can_validate=False)
+
+    response = client.patch(
+        "/auth/admin/users/user_01/role",
+        json={"admin_user_id": "admin_01", "role": "expert"},
+    )
+    assert response.status_code == 200
+    assert response.json()["role"] == "expert"
+
+
+def test_non_admin_cannot_update_user_role():
+    _seed_transcription_user("not_admin", role="contributor", can_transcribe=True, can_validate=True)
+    _seed_transcription_user("target_user", role="contributor", can_transcribe=False, can_validate=False)
+
+    response = client.patch(
+        "/auth/admin/users/target_user/role",
+        json={"admin_user_id": "not_admin", "role": "expert"},
+    )
+    assert response.status_code == 403
+
+
+def test_admin_can_assign_language_capabilities():
+    _seed_transcription_user("admin_lang", role="admin", can_transcribe=True, can_validate=True)
+    _seed_transcription_user("user_lang", role="contributor", can_transcribe=False, can_validate=False)
+
+    db = TestingSessionLocal()
+    try:
+        language = db.query(Language).filter(Language.iso_code == "LG").first()
+        assert language is not None
+        language_id = language.id
+    finally:
+        db.close()
+
+    response = client.patch(
+        "/auth/admin/users/user_lang/language-preferences",
+        json={
+            "admin_user_id": "admin_lang",
+            "language_id": language_id,
+            "can_record": True,
+            "can_transcribe": True,
+            "can_validate": True,
+            "is_primary_language": True,
+            "proficiency_level": "fluent",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["can_transcribe"] is True
+    assert payload["can_validate"] is True
+    assert payload["proficiency_level"] == "fluent"
 
 
 # ---------------------------------------------------------------------------

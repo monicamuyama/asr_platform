@@ -241,7 +241,8 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-from isdr_api.routers import auth, submissions
+from isdr_api.routers import auth, submissions, transcription
 
 app.include_router(auth.router)
 app.include_router(submissions.router)
+app.include_router(transcription.router)

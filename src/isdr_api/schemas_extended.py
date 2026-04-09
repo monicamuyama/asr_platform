@@ -396,3 +396,107 @@ class RewardTransactionSchema(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# 10. TRANSCRIPTION WORKFLOW
+# ============================================================================
+
+
+class TranscriptionQueueItemSchema(BaseModel):
+    id: str
+    recording_id: str
+    user_id: str
+    language_id: str
+    audio_url: str
+    status: str
+    speaker_type: str
+    transcript_count: int
+    validation_count: int
+    latest_transcription: Optional[str] = None
+    latest_confidence_score: Optional[float] = None
+    prompt_text: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class TranscriptionTaskCreateRequest(BaseModel):
+    recording_id: str
+    transcriber_id: str
+    transcribed_text: str = Field(min_length=1)
+    confidence_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class TranscriptionTaskSchema(BaseModel):
+    id: str
+    recording_id: str
+    transcriber_id: str
+    transcribed_text: str
+    confidence_score: Optional[float] = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TranscriptionValidationCreateRequest(BaseModel):
+    transcription_id: str
+    validator_id: str
+    rating: int = Field(ge=1, le=5)
+    is_correct: bool
+    suggested_correction: Optional[str] = None
+    comments: Optional[str] = None
+    deep_cultural_meaning: Optional[str] = None
+
+
+class TranscriptionValidationSchema(BaseModel):
+    id: str
+    transcription_id: str
+    validator_id: str
+    rating: int
+    is_correct: bool
+    suggested_correction: Optional[str] = None
+    comments: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GraduateTranscriptionRequest(BaseModel):
+    expert_id: str
+
+
+class PromptBankEntrySchema(BaseModel):
+    id: str
+    language_id: str
+    dialect_id: Optional[str] = None
+    sentence_text: str
+    domain: str
+    source_type: str
+    is_verified: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# 11. ADMIN MANAGEMENT
+# ============================================================================
+
+
+class AdminRoleUpdateRequest(BaseModel):
+    admin_user_id: str
+    role: Literal["contributor", "expert", "admin"]
+
+
+class AdminLanguageCapabilityUpdateRequest(BaseModel):
+    admin_user_id: str
+    language_id: str
+    dialect_id: Optional[str] = None
+    is_primary_language: Optional[bool] = None
+    can_record: Optional[bool] = None
+    can_transcribe: Optional[bool] = None
+    can_validate: Optional[bool] = None
+    proficiency_level: Optional[Literal["native", "fluent", "intermediate", "beginner"]] = None

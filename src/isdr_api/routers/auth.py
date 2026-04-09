@@ -27,6 +27,8 @@ from isdr_api.db_models_extended import (  # noqa: F401 - deliberate use of exte
     Wallet,
 )
 from isdr_api.schemas_extended import (
+    AdminLanguageCapabilityUpdateRequest,
+    AdminRoleUpdateRequest,
     ConsentDocumentSchema,
     CountrySchema,
     DatasetSpeakerIdSchema,
@@ -64,6 +66,15 @@ def hash_password(password: str) -> str:
 def generate_speaker_code(country_code: str, language_code: str, sequence_number: int) -> str:
     """Generate speaker code: UG-ACH-000245."""
     return f"{country_code.upper()}-{language_code.upper()}-{str(sequence_number).zfill(6)}"
+
+
+def require_admin(db: Session, admin_user_id: str) -> User:
+    admin_user = db.query(User).filter(User.id == admin_user_id).first()
+    if admin_user is None:
+        raise HTTPException(status_code=404, detail="Admin user not found")
+    if admin_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return admin_user
 
 
 # ============================================================================
@@ -566,6 +577,91 @@ def get_user_speaker_id(user_id: str, db: Session = Depends(get_db)) -> DatasetS
     if not speaker_id:
         raise HTTPException(status_code=404, detail="Speaker ID not found")
     return speaker_id
+
+
+@router.get("/admin/users", response_model=list[UserSchema])
+def list_users_for_admin(admin_user_id: str, db: Session = Depends(get_db)) -> list[User]:
+    """List users for admin management."""
+    require_admin(db, admin_user_id)
+    return db.query(User).order_by(User.created_at.desc()).limit(200).all()
+
+
+@router.patch("/admin/users/{user_id}/role", response_model=UserSchema)
+def admin_update_user_role(
+    user_id: str,
+    payload: AdminRoleUpdateRequest,
+    db: Session = Depends(get_db),
+) -> User:
+    """Update a user's role (admin only)."""
+    require_admin(db, payload.admin_user_id)
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.role = payload.role
+    user.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.patch("/admin/users/{user_id}/language-preferences", response_model=UserLanguagePreferenceSchema)
+def admin_update_user_language_capabilities(
+    user_id: str,
+    payload: AdminLanguageCapabilityUpdateRequest,
+    db: Session = Depends(get_db),
+) -> UserLanguagePreference:
+    """Create or update a user's language capability permissions (admin only)."""
+    require_admin(db, payload.admin_user_id)
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    language = db.query(Language).filter(Language.id == payload.language_id).first()
+    if language is None:
+        raise HTTPException(status_code=404, detail="Language not found")
+
+    preference = (
+        db.query(UserLanguagePreference)
+        .filter(
+            UserLanguagePreference.user_id == user_id,
+            UserLanguagePreference.language_id == payload.language_id,
+        )
+        .first()
+    )
+
+    if preference is None:
+        preference = UserLanguagePreference(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            language_id=payload.language_id,
+            dialect_id=payload.dialect_id,
+            is_primary_language=payload.is_primary_language or False,
+            can_record=payload.can_record or False,
+            can_transcribe=payload.can_transcribe or False,
+            can_validate=payload.can_validate or False,
+            proficiency_level=payload.proficiency_level or "native",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(preference)
+    else:
+        if payload.dialect_id is not None:
+            preference.dialect_id = payload.dialect_id
+        if payload.is_primary_language is not None:
+            preference.is_primary_language = payload.is_primary_language
+        if payload.can_record is not None:
+            preference.can_record = payload.can_record
+        if payload.can_transcribe is not None:
+            preference.can_transcribe = payload.can_transcribe
+        if payload.can_validate is not None:
+            preference.can_validate = payload.can_validate
+        if payload.proficiency_level is not None:
+            preference.proficiency_level = payload.proficiency_level
+
+    db.commit()
+    db.refresh(preference)
+    return preference
 
 
 # ============================================================================

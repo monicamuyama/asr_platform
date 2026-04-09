@@ -17,10 +17,14 @@ import { flushQueuedSubmissions, listQueuedSubmissions, queueSubmission } from '
 import {
   createCommunityRating,
   createSubmission,
+  createTranscriptionValidation,
+  graduateTranscriptionTask,
   getCommunityQueue,
   getConsentDocuments,
   getLanguages,
   getRatingsByUser,
+  getPromptBank,
+  getTranscriptionQueue,
   getSubmissions,
   getUserById,
   getUserLanguagePreferencesById,
@@ -30,6 +34,11 @@ import {
   type ConsentDocument,
   type Language,
   type RatingHistoryItem,
+  type PromptBankEntry,
+  type TranscriptionQueueItem,
+  type TranscriptionTaskResponse,
+  type TranscriptionValidationResponse,
+  upsertTranscriptionTask,
   type SubmissionCreateRequest,
   type SubmissionResponse,
   type UserLanguagePreferenceResponse,
@@ -55,17 +64,28 @@ export default function CorpusWeaveDashboard() {
   const [languages, setLanguages] = useState<Language[]>([])
   const [consents, setConsents] = useState<ConsentDocument[]>([])
   const [communityQueue, setCommunityQueue] = useState<CommunityQueueItem[]>([])
+  const [transcriptionQueue, setTranscriptionQueue] = useState<TranscriptionQueueItem[]>([])
+  const [promptBank, setPromptBank] = useState<PromptBankEntry[]>([])
   const [submissions, setSubmissions] = useState<SubmissionResponse[]>([])
   const [ratingHistory, setRatingHistory] = useState<RatingHistoryItem[]>([])
   const [targetLanguageId, setTargetLanguageId] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description'>('proverb')
   const [selectedQueueSubmissionId, setSelectedQueueSubmissionId] = useState('')
+  const [selectedTranscriptionRecordingId, setSelectedTranscriptionRecordingId] = useState('')
+  const [selectedTranscriptionTaskId, setSelectedTranscriptionTaskId] = useState('')
   const [selectedRating, setSelectedRating] = useState(3)
   const [validationScores, setValidationScores] = useState({
     intelligibility: 3,
     recordingQuality: 3,
     compliance: 3,
   })
+  const [transcriptionText, setTranscriptionText] = useState('')
+  const [transcriptionConfidence, setTranscriptionConfidence] = useState(0.9)
+  const [peerValidationRating, setPeerValidationRating] = useState(4)
+  const [peerValidationCorrect, setPeerValidationCorrect] = useState(true)
+  const [peerValidationCorrection, setPeerValidationCorrection] = useState('')
+  const [deepCulturalMeaning, setDeepCulturalMeaning] = useState('')
+  const [transcriptionMessage, setTranscriptionMessage] = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const [isSubmittingRecording, setIsSubmittingRecording] = useState(false)
   const [isRetryingUploads, setIsRetryingUploads] = useState(false)
@@ -105,6 +125,28 @@ export default function CorpusWeaveDashboard() {
       setSubmissions(data)
     } catch {
       setSubmissions([])
+    }
+  }
+
+  const refreshTranscriptionQueue = async () => {
+    try {
+      const data = await getTranscriptionQueue()
+      setTranscriptionQueue(data)
+      setSelectedTranscriptionRecordingId((current) => current || data[0]?.recording_id || data[0]?.id || '')
+      setSelectedTranscriptionTaskId((current) => current || '')
+    } catch {
+      setTranscriptionQueue([])
+      setSelectedTranscriptionRecordingId('')
+      setSelectedTranscriptionTaskId('')
+    }
+  }
+
+  const refreshPromptBank = async () => {
+    try {
+      const data = await getPromptBank()
+      setPromptBank(data)
+    } catch {
+      setPromptBank([])
     }
   }
 
@@ -171,7 +213,14 @@ export default function CorpusWeaveDashboard() {
           ?? ''
         setTargetLanguageId((current) => current || initialTargetLanguageId)
 
-        await Promise.all([refreshCommunityQueue(), refreshSubmissions(), refreshRatingHistory(userId), refreshWallet(userId)])
+        await Promise.all([
+          refreshCommunityQueue(),
+          refreshTranscriptionQueue(),
+          refreshPromptBank(),
+          refreshSubmissions(),
+          refreshRatingHistory(userId),
+          refreshWallet(userId),
+        ])
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to load your dashboard from backend.'
         const shouldResetSession = /user not found|invalid|unauthorized|forbidden|401|403/i.test(message)
@@ -319,6 +368,7 @@ export default function CorpusWeaveDashboard() {
     [communityQueue, ratedSubmissionIds, sessionUserId],
   )
   const selectedValidationSubmission = validationQueue.find((item) => item.id === selectedQueueSubmissionId) ?? validationQueue[0] ?? null
+  const selectedTranscriptionItem = transcriptionQueue.find((item) => item.recording_id === selectedTranscriptionRecordingId || item.id === selectedTranscriptionRecordingId) ?? transcriptionQueue[0] ?? null
   const speakerProfile = profile?.has_speech_impairment
     ? profile.impairment_type ?? 'speech_impairment'
     : 'healthy_speaker'
@@ -674,6 +724,89 @@ export default function CorpusWeaveDashboard() {
       setSelectedRating(validationScores.intelligibility)
     } catch (err) {
       setValidationMessage(err instanceof Error ? err.message : 'Failed to submit rating.')
+    }
+  }
+
+  const submitTranscription = async () => {
+    if (!sessionUserId) {
+      clearSession()
+      router.replace('/signin')
+      return
+    }
+
+    if (!selectedTranscriptionItem) {
+      setTranscriptionMessage('Choose a recording from the transcription queue.')
+      return
+    }
+
+    if (!transcriptionText.trim()) {
+      setTranscriptionMessage('Type a transcription before saving.')
+      return
+    }
+
+    setTranscriptionMessage('')
+    try {
+      const task = await upsertTranscriptionTask({
+        recording_id: selectedTranscriptionItem.recording_id,
+        transcriber_id: sessionUserId,
+        transcribed_text: transcriptionText.trim(),
+        confidence_score: transcriptionConfidence,
+      })
+      setSelectedTranscriptionTaskId(task.id)
+      setTranscriptionMessage('Transcription saved for peer review.')
+      await Promise.all([refreshTranscriptionQueue(), refreshPromptBank(), refreshSubmissions()])
+    } catch (err) {
+      setTranscriptionMessage(err instanceof Error ? err.message : 'Failed to save transcription.')
+    }
+  }
+
+  const submitPeerValidation = async () => {
+    if (!sessionUserId) {
+      clearSession()
+      router.replace('/signin')
+      return
+    }
+
+    if (!selectedTranscriptionTaskId) {
+      setTranscriptionMessage('Save a transcription first so it can be reviewed.')
+      return
+    }
+
+    try {
+      await createTranscriptionValidation(selectedTranscriptionTaskId, {
+        transcription_id: selectedTranscriptionTaskId,
+        validator_id: sessionUserId,
+        rating: peerValidationRating,
+        is_correct: peerValidationCorrect,
+        suggested_correction: peerValidationCorrection || null,
+        comments: null,
+        deep_cultural_meaning: deepCulturalMeaning || null,
+      })
+      setTranscriptionMessage('Peer review saved.')
+      await Promise.all([refreshTranscriptionQueue(), refreshPromptBank(), refreshSubmissions()])
+    } catch (err) {
+      setTranscriptionMessage(err instanceof Error ? err.message : 'Failed to save peer review.')
+    }
+  }
+
+  const graduateTranscription = async () => {
+    if (!sessionUserId) {
+      clearSession()
+      router.replace('/signin')
+      return
+    }
+
+    if (!selectedTranscriptionTaskId) {
+      setTranscriptionMessage('Save a transcription before graduation.')
+      return
+    }
+
+    try {
+      await graduateTranscriptionTask(selectedTranscriptionTaskId, sessionUserId)
+      setTranscriptionMessage('Verified transcription moved into the prompt bank.')
+      await Promise.all([refreshTranscriptionQueue(), refreshPromptBank(), refreshSubmissions()])
+    } catch (err) {
+      setTranscriptionMessage(err instanceof Error ? err.message : 'Failed to graduate transcription.')
     }
   }
 
@@ -1047,21 +1180,115 @@ export default function CorpusWeaveDashboard() {
                   <CardDescription>Write out what you hear</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <Link href="/transcription">
+                    <Button variant="outline" className="w-full border-border">Open Task Dashboard</Button>
+                  </Link>
                   <div className="bg-muted/50 rounded-xl p-4 flex items-center justify-center">
                     <Volume2 className="h-8 w-8 text-primary" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Recording Queue</Label>
+                    <Select
+                      value={selectedTranscriptionItem?.recording_id ?? ''}
+                      onValueChange={setSelectedTranscriptionRecordingId}
+                    >
+                      <SelectTrigger className="border-border">
+                        <SelectValue placeholder="Select a recording" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {transcriptionQueue.map((item) => (
+                          <SelectItem key={item.recording_id} value={item.recording_id}>
+                            {item.language_id} · {item.speaker_type} · {item.recording_id.slice(0, 8)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="rounded-xl border border-border bg-muted/40 p-4 space-y-3">
+                    {selectedTranscriptionItem?.audio_url ? (
+                      <audio controls className="w-full" src={selectedTranscriptionItem.audio_url} />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">No audio is attached to the selected recording.</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {selectedTranscriptionItem?.transcript_count ? `${selectedTranscriptionItem.transcript_count} transcription task(s)` : 'No transcription tasks yet'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedTranscriptionItem?.validation_count ? `${selectedTranscriptionItem.validation_count} peer validation(s)` : 'No peer validations yet'}
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="transcription" className="text-sm font-medium">Your Transcription</Label>
                     <Textarea 
                       id="transcription"
-                      placeholder="Transcription pipeline is not exposed yet." 
+                      placeholder="Type what you hear in the recording." 
                       className="border-border resize-none" 
                       rows={4}
-                      disabled
+                      value={transcriptionText}
+                      onChange={(event) => setTranscriptionText(event.target.value)}
                     />
                   </div>
-                  <Button className="w-full bg-primary hover:bg-primary/90" disabled>Submit Transcription</Button>
-                  <p className="text-xs text-muted-foreground">The backend does not expose transcription endpoints yet.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Confidence</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={transcriptionConfidence}
+                        onChange={(event) => setTranscriptionConfidence(Number(event.target.value))}
+                        className="border-border"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Task Status</Label>
+                      <Input value={selectedTranscriptionItem?.status ?? 'none'} readOnly className="border-border" />
+                    </div>
+                  </div>
+                  <Button className="w-full bg-primary hover:bg-primary/90" type="button" onClick={submitTranscription}>Submit Transcription</Button>
+                  <div className="space-y-2 rounded-xl border border-border bg-background p-4">
+                    <p className="text-sm font-medium text-foreground">Peer Review</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">Rating</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          max="5"
+                          value={peerValidationRating}
+                          onChange={(event) => setPeerValidationRating(Number(event.target.value))}
+                          className="border-border"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">Is Correct</Label>
+                        <Select value={peerValidationCorrect ? 'true' : 'false'} onValueChange={(value) => setPeerValidationCorrect(value === 'true')}>
+                          <SelectTrigger className="border-border"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">Yes</SelectItem>
+                            <SelectItem value="false">No</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="meaning" className="text-sm font-medium">Deep Cultural Meaning</Label>
+                      <Textarea id="meaning" rows={3} className="border-border resize-none" value={deepCulturalMeaning} onChange={(event) => setDeepCulturalMeaning(event.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="correction" className="text-sm font-medium">Suggested Correction</Label>
+                      <Textarea id="correction" rows={2} className="border-border resize-none" value={peerValidationCorrection} onChange={(event) => setPeerValidationCorrection(event.target.value)} />
+                    </div>
+                    <Button variant="outline" className="w-full border-border" type="button" onClick={submitPeerValidation} disabled={!selectedTranscriptionTaskId}>Save Peer Review</Button>
+                    <Button className="w-full bg-primary hover:bg-primary/90" type="button" onClick={graduateTranscription}>Graduate to Prompt Bank</Button>
+                  </div>
+                  <div className="rounded-xl border border-border bg-muted/30 p-4">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Prompt Bank</p>
+                    <p className="text-sm text-foreground">{promptBank.length} verified prompts ready for prompted recording.</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">The backend now exposes transcription, peer review, and prompt-bank endpoints.</p>
+                  {transcriptionMessage && <p className="text-sm text-foreground">{transcriptionMessage}</p>}
                 </CardContent>
               </Card>
             </div>

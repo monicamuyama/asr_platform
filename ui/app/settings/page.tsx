@@ -167,12 +167,17 @@ export default function SettingsPage() {
               </div>
               <h1 className="text-2xl font-bold text-foreground">CorpusWeave</h1>
             </div>
-            <Link href="/">
-              <Button variant="ghost" size="sm" className="gap-1">
-                <ArrowLeft className="h-4 w-4" />
-                Back
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link href="/admin">
+                <Button variant="outline" size="sm" className="border-border">Admin Panel</Button>
+              </Link>
+              <Link href="/">
+                <Button variant="ghost" size="sm" className="gap-1">
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </header>

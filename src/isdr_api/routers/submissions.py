@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from isdr_api.database import get_db
 from isdr_api.db_models import CommunityRating, GovernanceParam, Submission
-from isdr_api.db_models_extended import Wallet
+from isdr_api.db_models_extended import Language, Recording, Wallet
 from isdr_api.schemas import (
     QueueItemSchema,
     RatingCreate,
@@ -178,6 +178,39 @@ def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) 
     )
     db.add(submission)
     db.flush()
+
+    if payload.audio_url:
+        normalized_language_code = submission.language_code.upper()
+        language = (
+            db.query(Language)
+            .filter(Language.iso_code == normalized_language_code)
+            .first()
+        )
+        if language is None:
+            language = Language(
+                language_name=normalized_language_code,
+                iso_code=normalized_language_code,
+                is_low_resource=True,
+            )
+            db.add(language)
+            db.flush()
+
+        recording = Recording(
+            user_id=submission.contributor_id,
+            sentence_id=None,
+            language_id=language.id,
+            dialect_id=None,
+            audio_url=submission.audio_url,
+            duration_seconds=0.0,
+            audio_quality_score=None,
+            speaker_type=submission.speaker_profile,
+            recording_device="web",
+            noise_level="quiet",
+            status="pending_transcription",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(recording)
 
     if payload.category == "riddle" and payload.riddle_part == "reveal" and payload.challenge_submission_id:
         challenge_submission = (

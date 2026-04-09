@@ -52,6 +52,22 @@ export type UserUpdateRequest = {
   onboarding_completed?: boolean;
 };
 
+export type AdminRoleUpdateRequest = {
+  admin_user_id: string;
+  role: 'contributor' | 'expert' | 'admin';
+};
+
+export type AdminLanguageCapabilityUpdateRequest = {
+  admin_user_id: string;
+  language_id: string;
+  dialect_id?: string | null;
+  is_primary_language?: boolean;
+  can_record?: boolean;
+  can_transcribe?: boolean;
+  can_validate?: boolean;
+  proficiency_level?: 'native' | 'fluent' | 'intermediate' | 'beginner';
+};
+
 export type UserProfileResponse = {
   id: string;
   user_id: string;
@@ -161,6 +177,72 @@ export type RatingHistoryItem = {
   created_at: string;
 };
 
+export type TranscriptionQueueItem = {
+  id: string;
+  recording_id: string;
+  user_id: string;
+  language_id: string;
+  audio_url: string;
+  status: string;
+  speaker_type: string;
+  transcript_count: number;
+  validation_count: number;
+  latest_transcription: string | null;
+  latest_confidence_score: number | null;
+  prompt_text: string | null;
+};
+
+export type TranscriptionTaskResponse = {
+  id: string;
+  recording_id: string;
+  transcriber_id: string;
+  transcribed_text: string;
+  confidence_score: number | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TranscriptionTaskRequest = {
+  recording_id: string;
+  transcriber_id: string;
+  transcribed_text: string;
+  confidence_score?: number | null;
+};
+
+export type TranscriptionValidationRequest = {
+  transcription_id: string;
+  validator_id: string;
+  rating: number;
+  is_correct: boolean;
+  suggested_correction?: string | null;
+  comments?: string | null;
+  deep_cultural_meaning?: string | null;
+};
+
+export type TranscriptionValidationResponse = {
+  id: string;
+  transcription_id: string;
+  validator_id: string;
+  rating: number;
+  is_correct: boolean;
+  suggested_correction: string | null;
+  comments: string | null;
+  created_at: string;
+};
+
+export type PromptBankEntry = {
+  id: string;
+  language_id: string;
+  dialect_id: string | null;
+  sentence_text: string;
+  domain: string;
+  source_type: string;
+  is_verified: boolean;
+  created_by: string | null;
+  created_at: string;
+};
+
 export type SubmissionCreateRequest = {
   contributor_id: string;
   language_code: string;
@@ -208,6 +290,10 @@ export function getUserById(userId: string): Promise<UserResponse> {
   return fetchJson<UserResponse>(`/auth/users/${userId}`);
 }
 
+export function listUsersForAdmin(adminUserId: string): Promise<UserResponse[]> {
+  return fetchJson<UserResponse[]>(`/auth/admin/users?admin_user_id=${encodeURIComponent(adminUserId)}`)
+}
+
 export async function updateUserById(userId: string, payload: UserUpdateRequest): Promise<UserResponse> {
   const response = await fetch(`${API_BASE}/auth/users/${userId}`, {
     method: 'PATCH',
@@ -223,6 +309,43 @@ export async function updateUserById(userId: string, payload: UserUpdateRequest)
   }
 
   return response.json() as Promise<UserResponse>
+}
+
+export async function adminUpdateUserRole(userId: string, payload: AdminRoleUpdateRequest): Promise<UserResponse> {
+  const response = await fetch(`${API_BASE}/auth/admin/users/${userId}/role`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payloadBody.detail ?? 'Role update failed')
+  }
+
+  return response.json() as Promise<UserResponse>
+}
+
+export async function adminUpdateUserLanguageCapabilities(
+  userId: string,
+  payload: AdminLanguageCapabilityUpdateRequest,
+): Promise<UserLanguagePreferenceResponse> {
+  const response = await fetch(`${API_BASE}/auth/admin/users/${userId}/language-preferences`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payloadBody.detail ?? 'Language capability update failed')
+  }
+
+  return response.json() as Promise<UserLanguagePreferenceResponse>
 }
 
 export function getUserProfileById(userId: string): Promise<UserProfileResponse> {
@@ -312,4 +435,66 @@ export async function createCommunityRating(submissionId: string, payload: Ratin
   }
 
   return response.json() as Promise<RatingResult>
+}
+
+export function getTranscriptionQueue(): Promise<TranscriptionQueueItem[]> {
+  return fetchJson<TranscriptionQueueItem[]>(`/transcription/queue`)
+}
+
+export async function upsertTranscriptionTask(payload: TranscriptionTaskRequest): Promise<TranscriptionTaskResponse> {
+  const response = await fetch(`${API_BASE}/transcription/tasks`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payloadBody.detail ?? 'Transcription submission failed')
+  }
+
+  return response.json() as Promise<TranscriptionTaskResponse>
+}
+
+export async function createTranscriptionValidation(
+  taskId: string,
+  payload: TranscriptionValidationRequest,
+): Promise<TranscriptionValidationResponse> {
+  const response = await fetch(`${API_BASE}/transcription/tasks/${taskId}/validations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payloadBody.detail ?? 'Transcription validation failed')
+  }
+
+  return response.json() as Promise<TranscriptionValidationResponse>
+}
+
+export async function graduateTranscriptionTask(taskId: string, expertId: string): Promise<PromptBankEntry> {
+  const response = await fetch(`${API_BASE}/transcription/tasks/${taskId}/graduate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ expert_id: expertId }),
+  })
+
+  if (!response.ok) {
+    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payloadBody.detail ?? 'Prompt graduation failed')
+  }
+
+  return response.json() as Promise<PromptBankEntry>
+}
+
+export function getPromptBank(): Promise<PromptBankEntry[]> {
+  return fetchJson<PromptBankEntry[]>(`/transcription/prompt-bank`)
 }
