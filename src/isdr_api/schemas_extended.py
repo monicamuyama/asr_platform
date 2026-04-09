@@ -97,6 +97,15 @@ class RegionSchema(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DistrictSchema(BaseModel):
+    id: str
+    country_id: str
+    region_id: Optional[str] = None
+    district_name: str
+
+    model_config = {"from_attributes": True}
+
+
 class LanguageSchema(BaseModel):
     id: str
     language_name: str
@@ -137,7 +146,8 @@ class UserDemographicsRequest(BaseModel):
     gender: Optional[Literal["female", "male", "non_binary", "prefer_not_to_say"]] = None
     country_id: Optional[str] = None
     region_id: Optional[str] = None
-    district: Optional[str] = None
+    district_id: Optional[str] = None
+    tribe_ethnicity: Optional[str] = None
     native_language_id: Optional[str] = None
     education_level: Optional[Literal["primary", "secondary", "university", "other", "prefer_not_to_say"]] = None
 
@@ -149,7 +159,8 @@ class UserDemographicsSchema(BaseModel):
     gender: Optional[str]
     country_id: Optional[str]
     region_id: Optional[str]
-    district: Optional[str]
+    district_id: Optional[str]
+    tribe_ethnicity: Optional[str]
     native_language_id: Optional[str]
     education_level: Optional[str]
     created_at: datetime
@@ -297,7 +308,8 @@ class FullSignupRequest(BaseModel):
     gender: Optional[Literal["female", "male", "non_binary", "prefer_not_to_say"]] = None
     country_id: Optional[str] = None
     region_id: Optional[str] = None
-    district: Optional[str] = None
+    district_id: Optional[str] = None
+    tribe_ethnicity: Optional[str] = None
     native_language_id: Optional[str] = None
     education_level: Optional[Literal["primary", "secondary", "university", "other", "prefer_not_to_say"]] = None
 

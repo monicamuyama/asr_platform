@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import Link from 'next/link'
 import { Mail, Lock, User, ArrowLeft, CheckCircle } from 'lucide-react'
-import { API_BASE, type ConsentDocument, type Country, type Language, type SpeechCondition } from '@/lib/api'
+import { API_BASE, type ConsentDocument, type Country, type District, type Language, type SpeechCondition } from '@/lib/api'
 import { setSessionUserId } from '@/lib/auth'
 
 const SIGNUP_DRAFT_KEY = 'corpusweave_signup_draft'
@@ -22,6 +22,8 @@ type SignupDraft = {
     password: string
     languageId: string
     countryId: string
+    districtId: string
+    tribeEthnicity: string
     hasSpeechImpairment: boolean
     speechConditionId: string
     speechConditionSeverity: 'mild' | 'moderate' | 'severe'
@@ -72,6 +74,8 @@ export default function SignUpPage() {
     password: '',
     languageId: '',
     countryId: '',
+    districtId: '',
+    tribeEthnicity: '',
     hasSpeechImpairment: false,
     speechConditionId: '',
     speechConditionSeverity: 'mild' as const,
@@ -79,6 +83,7 @@ export default function SignUpPage() {
     speechConditionResearchConsent: false,
   })
   const [countries, setCountries] = useState<Country[]>([])
+  const [districts, setDistricts] = useState<District[]>([])
   const [languages, setLanguages] = useState<Language[]>([])
   const [consents, setConsents] = useState<ConsentDocument[]>([])
   const [speechConditions, setSpeechConditions] = useState<SpeechCondition[]>([])
@@ -100,28 +105,31 @@ export default function SignUpPage() {
   useEffect(() => {
     const loadReferenceData = async () => {
       try {
-        const [countryRes, langRes, consentRes, conditionRes] = await Promise.all([
+        const [countryRes, langRes, consentRes, conditionRes, districtRes] = await Promise.all([
           fetch(`${API_BASE}/auth/countries`),
           fetch(`${API_BASE}/auth/languages`),
           fetch(`${API_BASE}/auth/consent-documents`),
           fetch(`${API_BASE}/auth/speech-conditions`),
+          fetch(`${API_BASE}/auth/districts`),
         ])
 
-        if (!countryRes.ok || !langRes.ok || !consentRes.ok || !conditionRes.ok) {
+        if (!countryRes.ok || !langRes.ok || !consentRes.ok || !conditionRes.ok || !districtRes.ok) {
           throw new Error('Failed to load reference data from backend')
         }
 
-        const [countryData, langData, consentData, conditionData] = await Promise.all([
+        const [countryData, langData, consentData, conditionData, districtData] = await Promise.all([
           countryRes.json() as Promise<Country[]>,
           langRes.json() as Promise<Language[]>,
           consentRes.json() as Promise<ConsentDocument[]>,
           conditionRes.json() as Promise<SpeechCondition[]>,
+          districtRes.json() as Promise<District[]>,
         ])
 
         setCountries(countryData)
         setLanguages(langData)
         setConsents(consentData)
         setSpeechConditions(conditionData)
+        setDistricts(districtData)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to reach backend API')
       }
@@ -133,6 +141,11 @@ export default function SignUpPage() {
   const selectedCountry = useMemo(
     () => countries.find((country) => country.id === formData.countryId) ?? null,
     [countries, formData.countryId],
+  )
+
+  const filteredDistricts = useMemo(
+    () => districts.filter((district) => district.country_id === formData.countryId),
+    [districts, formData.countryId],
   )
 
   const selectedSpeechCondition = useMemo(
@@ -240,7 +253,8 @@ export default function SignUpPage() {
           gender: null,
           country_id: selectedCountry.id,
           region_id: null,
-          district: null,
+          district_id: formData.districtId || null,
+          tribe_ethnicity: formData.tribeEthnicity || null,
           native_language_id: selectedLanguage.id,
           education_level: null,
           speech_conditions:
@@ -423,6 +437,36 @@ export default function SignUpPage() {
                       </Select>
                     </div>
                   </div>
+
+                  {formData.countryId && filteredDistricts.length > 0 && (
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="district" className="text-sm font-medium">District</Label>
+                        <Select value={formData.districtId} onValueChange={(value) => handleInputChange('districtId', value)}>
+                          <SelectTrigger className="border-border">
+                            <SelectValue placeholder="Select a district" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="">Not specified</SelectItem>
+                            {filteredDistricts.map((district) => (
+                              <SelectItem key={district.id} value={district.id}>{district.district_name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="tribe-ethnicity" className="text-sm font-medium">Tribe/Ethnicity</Label>
+                        <Input
+                          id="tribe-ethnicity"
+                          placeholder="Your tribe or ethnic group (optional)"
+                          value={formData.tribeEthnicity}
+                          onChange={(e) => handleInputChange('tribeEthnicity', e.target.value)}
+                          className="border-border"
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
                     <div className="space-y-2">

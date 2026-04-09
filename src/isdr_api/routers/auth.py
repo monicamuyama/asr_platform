@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from isdr_api.db_models_extended import (  # noqa: F401 - deliberate use of exte
     Country,
     DatasetSpeakerId,
     Dialect,
+    District,
     Language,
     Region,
     SpeechCondition,
@@ -29,6 +31,7 @@ from isdr_api.schemas_extended import (
     CountrySchema,
     DatasetSpeakerIdSchema,
     DialectSchema,
+    DistrictSchema,
     FullSignupRequest,
     LanguageSchema,
     RegionSchema,
@@ -258,7 +261,8 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
         gender=payload.gender,
         country_id=payload.country_id,
         region_id=payload.region_id,
-        district=payload.district,
+        district_id=payload.district_id,
+        tribe_ethnicity=payload.tribe_ethnicity,
         native_language_id=payload.native_language_id,
         education_level=payload.education_level,
         created_at=datetime.now(timezone.utc),
@@ -562,3 +566,26 @@ def get_user_speaker_id(user_id: str, db: Session = Depends(get_db)) -> DatasetS
     if not speaker_id:
         raise HTTPException(status_code=404, detail="Speaker ID not found")
     return speaker_id
+
+
+# ============================================================================
+# GEOGRAPHIC DATA ENDPOINTS
+# ============================================================================
+
+
+@router.get("/districts", response_model=list[DistrictSchema])
+def get_districts(country_id: Optional[str] = None, db: Session = Depends(get_db)) -> list[District]:
+    """Get all districts, optionally filtered by country."""
+    query = db.query(District)
+    if country_id:
+        query = query.filter(District.country_id == country_id)
+    return query.order_by(District.district_name).all()
+
+
+@router.get("/districts/{district_id}", response_model=DistrictSchema)
+def get_district(district_id: str, db: Session = Depends(get_db)) -> District:
+    """Get district by ID."""
+    district = db.query(District).filter(District.id == district_id).first()
+    if not district:
+        raise HTTPException(status_code=404, detail="District not found")
+    return district

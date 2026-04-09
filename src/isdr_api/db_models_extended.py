@@ -99,7 +99,8 @@ class UserDemographics(Base):
 
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id"), nullable=True)
     region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id"), nullable=True)
-    district: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    district_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("districts.id"), nullable=True)
+    tribe_ethnicity: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     native_language_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("languages.id"), nullable=True)
     education_level: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -110,6 +111,7 @@ class UserDemographics(Base):
     user: Mapped[User] = relationship("User", back_populates="demographics")
     country: Mapped[Country | None] = relationship("Country")
     region: Mapped[Region | None] = relationship("Region")
+    district: Mapped[District | None] = relationship("District")
     native_language: Mapped[Language | None] = relationship("Language")
 
 
@@ -196,6 +198,19 @@ class Region(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
     country: Mapped[Country] = relationship("Country")
+
+
+class District(Base):
+    __tablename__ = "districts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id"), nullable=False, index=True)
+    region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id"), nullable=True)
+    district_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    country: Mapped[Country] = relationship("Country")
+    region: Mapped[Region | None] = relationship("Region")
 
 
 class Language(Base):

@@ -7,6 +7,13 @@ export type Country = {
   region: string;
 };
 
+export type District = {
+  id: string;
+  country_id: string;
+  region_id: string | null;
+  district_name: string;
+};
+
 export type Language = {
   id: string;
   language_name: string;

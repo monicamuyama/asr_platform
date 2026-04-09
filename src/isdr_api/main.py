@@ -15,6 +15,7 @@ def _ensure_runtime_schema() -> None:
     inspector = inspect(engine)
     user_columns = {column["name"] for column in inspector.get_columns("users")}
     submission_columns = {column["name"] for column in inspector.get_columns("submissions")}
+    demographics_columns = {column["name"] for column in inspector.get_columns("user_demographics")}
 
     with engine.begin() as connection:
         if "onboarding_completed" not in user_columns:
@@ -39,14 +40,42 @@ def _ensure_runtime_schema() -> None:
                     text(f"ALTER TABLE submissions ADD COLUMN {column_name} {column_type}")
                 )
 
+        # Add district_id and tribe_ethnicity columns to user_demographics if missing
+        if "district_id" not in demographics_columns:
+            connection.execute(
+                text("ALTER TABLE user_demographics ADD COLUMN district_id VARCHAR(36)")
+            )
+        if "tribe_ethnicity" not in demographics_columns:
+            connection.execute(
+                text("ALTER TABLE user_demographics ADD COLUMN tribe_ethnicity VARCHAR(100)")
+            )
+
 
 def _seed_reference_data(db: Session) -> None:
-    from isdr_api.db_models_extended import ConsentDocument, Country, Language, SpeechCondition
+    from isdr_api.db_models_extended import ConsentDocument, Country, District, Language, SpeechCondition
 
     uganda = db.query(Country).filter(Country.iso_code == "UG").first()
     if uganda is None:
         uganda = Country(country_name="Uganda", iso_code="UG", region="Africa")
         db.add(uganda)
+        db.flush()
+
+    # Seed Uganda districts
+    existing_districts = db.query(District).filter(District.country_id == uganda.id).count()
+    if existing_districts == 0:
+        uganda_districts = [
+            "Abim", "Adjumani", "Agago", "Alebtong", "Amolatar", "Amudat", "Amuria", "Arua",
+            "Budaka", "Buddu", "Bugiri", "Buhweju", "Bukomansimbi", "Bukwa", "Buliisa", "Bundibugyo",
+            "Bunyangabu", "Bushenyi", "Busia", "Butaleja", "Butambala", "Butanderega", "Butansimbi",
+            "Butiaba", "Buyende", "Cheptegei", "Dokolo", "Entebbe", "Gulu", "Hoima", "Ibanda",
+            "Isingiro", "Jinja", "Kabale", "Kabarole", "Kaberamaido", "Kabira", "Kabirdibwa", "Kabirini",
+            "Kabisibwa", "Kabole", "Kabowa", "Kabudde", "Kabuguzo", "Kabuku", "Kabugwe", "Kabugyeya",
+            "Kabugu", "Kabuja", "Kabuka", "Kabukale", "Kabula", "Kabulasoke", "Kabule", "Kabuleganya",
+            "Kabuli", "Kabulo", "Kabulwamala", "Kabuma", "Kabumare", "Kabumbi", "Kabumire"
+        ]
+        
+        for district_name in uganda_districts:
+            db.add(District(country_id=uganda.id, district_name=district_name))
         db.flush()
 
     existing_languages = db.query(Language).count()
