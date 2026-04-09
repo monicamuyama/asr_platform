@@ -385,6 +385,9 @@ class TranscriptionTask(Base):
     validations: Mapped[list[TranscriptionValidation]] = relationship(
         "TranscriptionValidation", back_populates="transcription", cascade="all, delete-orphan"
     )
+    translations: Mapped[list[TranslationTask]] = relationship(
+        "TranslationTask", back_populates="transcription", cascade="all, delete-orphan"
+    )
 
 
 class TranscriptionValidation(Base):
@@ -405,6 +408,25 @@ class TranscriptionValidation(Base):
 
     transcription: Mapped[TranscriptionTask] = relationship(
         "TranscriptionTask", back_populates="validations"
+    )
+
+
+class TranslationTask(Base):
+    __tablename__ = "translation_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    transcription_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("transcription_tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    translator_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    target_language_code: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    translated_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="submitted")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    transcription: Mapped[TranscriptionTask] = relationship(
+        "TranscriptionTask", back_populates="translations"
     )
 
 

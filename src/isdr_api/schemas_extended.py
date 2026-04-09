@@ -481,6 +481,35 @@ class PromptBankEntrySchema(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TranslationQueueItemSchema(BaseModel):
+    transcription_id: str
+    recording_id: str
+    source_language_id: str
+    transcribed_text: str
+    translation_count: int
+    latest_translation: Optional[str] = None
+
+
+class TranslationTaskCreateRequest(BaseModel):
+    transcription_id: str
+    translator_id: str
+    target_language_code: str = Field(min_length=2, max_length=10)
+    translated_text: str = Field(min_length=1)
+
+
+class TranslationTaskSchema(BaseModel):
+    id: str
+    transcription_id: str
+    translator_id: str
+    target_language_code: str
+    translated_text: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ============================================================================
 # 11. ADMIN MANAGEMENT
 # ============================================================================

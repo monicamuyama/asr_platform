@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Pause, Mic, RotateCcw } from 'lucide-react'
 
@@ -207,14 +206,13 @@ export function RiddleLinkedRecorder({ draftKey, disabled = false, onSubmitPair 
   }
 
   return (
-    <Card className="border-border">
-      <CardHeader>
-        <CardTitle>Linked Riddle Recorder</CardTitle>
-        <CardDescription>
+    <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
+      <div>
+        <p className="text-sm font-semibold text-foreground">Linked Riddle Recorder</p>
+        <p className="text-xs text-muted-foreground">
           Record two clips in sequence: Challenge question first, then Reveal answer.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </p>
+      </div>
         <p className="text-sm text-muted-foreground">{statusText}</p>
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>Current step: {activePart === 'challenge' ? 'Challenge' : 'Reveal'}</span>
@@ -290,7 +288,6 @@ export function RiddleLinkedRecorder({ draftKey, disabled = false, onSubmitPair 
 
         <p className="text-xs text-muted-foreground">Drafts are saved locally on this device until you submit.</p>
         {error && <p className="text-sm text-red-600">{error}</p>}
-      </CardContent>
-    </Card>
+    </div>
   )
 }

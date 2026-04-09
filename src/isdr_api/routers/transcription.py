@@ -12,6 +12,7 @@ from isdr_api.db_models_extended import (
     Language,
     Recording,
     SentenceCorpus,
+    TranslationTask,
     TranscriptionTask,
     TranscriptionValidation,
     User,
@@ -20,6 +21,9 @@ from isdr_api.db_models_extended import (
 from isdr_api.schemas_extended import (
     GraduateTranscriptionRequest,
     PromptBankEntrySchema,
+    TranslationQueueItemSchema,
+    TranslationTaskCreateRequest,
+    TranslationTaskSchema,
     TranscriptionQueueItemSchema,
     TranscriptionTaskCreateRequest,
     TranscriptionTaskSchema,
@@ -234,6 +238,15 @@ def graduate_transcription_task(
     if average_rating < 4 or not any(validation.is_correct for validation in validations):
         raise HTTPException(status_code=400, detail="Transcription has not met the graduation threshold")
 
+    translations = (
+        db.query(TranslationTask)
+        .filter(TranslationTask.transcription_id == task.id)
+        .order_by(TranslationTask.updated_at.desc())
+        .all()
+    )
+    if not translations:
+        raise HTTPException(status_code=400, detail="At least one translation is required before graduation")
+
     existing_entry = (
         db.query(SentenceCorpus)
         .filter(
@@ -276,3 +289,90 @@ def list_prompt_bank(db: Session = Depends(get_db)) -> list[SentenceCorpus]:
         .order_by(SentenceCorpus.created_at.desc())
         .all()
     )
+
+
+@router.get("/translation-queue", response_model=list[TranslationQueueItemSchema])
+def list_translation_queue(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    tasks = (
+        db.query(TranscriptionTask)
+        .filter(TranscriptionTask.status.in_(["submitted", "under_review", "translated"]))
+        .order_by(TranscriptionTask.updated_at.desc())
+        .all()
+    )
+
+    queue_items: list[dict[str, object]] = []
+    for task in tasks:
+        translation_count = (
+            db.query(func.count(TranslationTask.id))
+            .filter(TranslationTask.transcription_id == task.id)
+            .scalar()
+        )
+        latest_translation = (
+            db.query(TranslationTask)
+            .filter(TranslationTask.transcription_id == task.id)
+            .order_by(TranslationTask.updated_at.desc())
+            .first()
+        )
+        queue_items.append(
+            {
+                "transcription_id": task.id,
+                "recording_id": task.recording_id,
+                "source_language_id": task.recording.language_id,
+                "transcribed_text": task.transcribed_text,
+                "translation_count": int(translation_count or 0),
+                "latest_translation": latest_translation.translated_text if latest_translation else None,
+            }
+        )
+
+    return queue_items
+
+
+@router.post("/tasks/{task_id}/translations", response_model=TranslationTaskSchema)
+def create_or_update_translation_task(
+    task_id: str,
+    payload: TranslationTaskCreateRequest,
+    db: Session = Depends(get_db),
+) -> TranslationTask:
+    task = db.query(TranscriptionTask).filter(TranscriptionTask.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Transcription task not found")
+    if payload.transcription_id != task_id:
+        raise HTTPException(status_code=400, detail="transcription_id must match task path id")
+
+    _ensure_user_exists(db, payload.translator_id)
+
+    translation = (
+        db.query(TranslationTask)
+        .filter(
+            TranslationTask.transcription_id == task.id,
+            TranslationTask.translator_id == payload.translator_id,
+            TranslationTask.target_language_code == payload.target_language_code.upper(),
+        )
+        .first()
+    )
+
+    if translation is None:
+        translation = TranslationTask(
+            id=str(uuid.uuid4()),
+            transcription_id=task.id,
+            translator_id=payload.translator_id,
+            target_language_code=payload.target_language_code.upper(),
+            translated_text=payload.translated_text,
+            status="submitted",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(translation)
+    else:
+        translation.translated_text = payload.translated_text
+        translation.status = "submitted"
+        translation.updated_at = datetime.now(timezone.utc)
+
+    task.status = "translated"
+    task.updated_at = datetime.now(timezone.utc)
+    task.recording.status = "translated"
+    task.recording.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(translation)
+    return translation

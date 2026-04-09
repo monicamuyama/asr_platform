@@ -335,14 +335,6 @@ export default function CorpusWeaveDashboard() {
   }, [user])
 
   const userLanguage = profile?.primary_language ?? 'Not set'
-  const recordPromptByCategory: Record<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description', string> = {
-    proverb: 'The future is built by those who contribute today.',
-    idiom: 'A river does not forget its source.',
-    common_saying: 'Many hands make light work.',
-    riddle: 'What has roots that nobody sees and grows taller than trees?',
-    photo_description: 'Describe what you see in the assigned image with clear detail.',
-  }
-  const recordPrompt = recordPromptByCategory[selectedCategory]
   const activeConsentVersion = consents.find((document) => document.is_active)?.version ?? consents[0]?.version ?? 'v1.0'
   const primaryLanguagePreference =
     languagePreferences.find((preference) => preference.is_primary_language)
@@ -357,6 +349,42 @@ export default function CorpusWeaveDashboard() {
     ?? primaryLanguageInfo
     ?? languages[0]
     ?? null
+  const selectedTargetLanguageCode = (selectedTargetLanguage?.iso_code ?? primaryLanguageInfo?.iso_code ?? 'ENG').toUpperCase()
+  const categoryLabelsByLanguage: Record<string, Record<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description', string>> = {
+    LG: {
+      proverb: 'Olugero',
+      idiom: "Ekigambo eky'enfaanana",
+      common_saying: 'Ekigambo ekimanyiddwa',
+      riddle: 'Ekikokooma',
+      photo_description: 'Okunnyonnyola Ekifaananyi',
+    },
+    ENG: {
+      proverb: 'Proverb',
+      idiom: 'Idiom',
+      common_saying: 'Common Saying',
+      riddle: 'Riddle',
+      photo_description: 'Photo Description',
+    },
+  }
+  const localizedCategoryLabels = categoryLabelsByLanguage[selectedTargetLanguageCode] ?? categoryLabelsByLanguage.ENG
+
+  const recordPromptByLanguage: Record<string, Record<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description', string>> = {
+    LG: {
+      proverb: 'Amazzi agasuma tegabyala nnyo.',
+      idiom: 'Omuganda takuba mwana munne.',
+      common_saying: 'Ebintu bingi bikolebwa nga tuli bumu.',
+      riddle: 'Ekikokooma: Kiki ekimera nga tekirina mmwanyi?',
+      photo_description: "Nnyonnyola ky'olaba mu kifaananyi kino mu bulungi.",
+    },
+    ENG: {
+      proverb: 'The future is built by those who contribute today.',
+      idiom: 'A river does not forget its source.',
+      common_saying: 'Many hands make light work.',
+      riddle: 'What has roots that nobody sees and grows taller than trees?',
+      photo_description: 'Describe what you see in the assigned image with clear detail.',
+    },
+  }
+  const recordPrompt = (recordPromptByLanguage[selectedTargetLanguageCode] ?? recordPromptByLanguage.ENG)[selectedCategory]
   const nativeLanguageCode = primaryLanguageInfo?.iso_code ?? selectedTargetLanguage?.iso_code ?? 'en'
   const ratedSubmissionIds = useMemo(
     () => new Set(ratingHistory.map((item) => item.submission_id)),
@@ -979,11 +1007,11 @@ export default function CorpusWeaveDashboard() {
               <CardContent>
                 <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
                   {[
-                    { key: 'proverb', label: 'Proverb' },
-                    { key: 'idiom', label: 'Idiom' },
-                    { key: 'common_saying', label: 'Common Saying' },
-                    { key: 'riddle', label: 'Riddle' },
-                    { key: 'photo_description', label: 'Photo Description' },
+                    { key: 'proverb', label: localizedCategoryLabels.proverb },
+                    { key: 'idiom', label: localizedCategoryLabels.idiom },
+                    { key: 'common_saying', label: localizedCategoryLabels.common_saying },
+                    { key: 'riddle', label: localizedCategoryLabels.riddle },
+                    { key: 'photo_description', label: localizedCategoryLabels.photo_description },
                   ].map((item) => (
                     <Button
                       key={item.key}

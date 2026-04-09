@@ -315,6 +315,17 @@ def test_transcription_validation_and_graduation_flow():
     )
     assert validation_response.status_code == 200
 
+    translation_response = client.post(
+        f"/transcription/tasks/{task_id}/translations",
+        json={
+            "transcription_id": task_id,
+            "translator_id": "transcriber_01",
+            "target_language_code": "ENG",
+            "translated_text": "Wisdom is found in many hearts",
+        },
+    )
+    assert translation_response.status_code == 200
+
     graduate_response = client.post(
         f"/transcription/tasks/{task_id}/graduate",
         json={"expert_id": "expert_01"},
@@ -365,6 +376,16 @@ def test_transcription_graduation_requires_expert_role():
             "validator_id": "validator_role",
             "rating": 5,
             "is_correct": True,
+        },
+    )
+
+    client.post(
+        f"/transcription/tasks/{task_id}/translations",
+        json={
+            "transcription_id": task_id,
+            "translator_id": "transcriber_role",
+            "target_language_code": "ENG",
+            "translated_text": "The drumbeat carries memory",
         },
     )
 

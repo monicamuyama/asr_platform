@@ -243,6 +243,33 @@ export type PromptBankEntry = {
   created_at: string;
 };
 
+export type TranslationQueueItem = {
+  transcription_id: string;
+  recording_id: string;
+  source_language_id: string;
+  transcribed_text: string;
+  translation_count: number;
+  latest_translation: string | null;
+};
+
+export type TranslationTaskRequest = {
+  transcription_id: string;
+  translator_id: string;
+  target_language_code: string;
+  translated_text: string;
+};
+
+export type TranslationTaskResponse = {
+  id: string;
+  transcription_id: string;
+  translator_id: string;
+  target_language_code: string;
+  translated_text: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SubmissionCreateRequest = {
   contributor_id: string;
   language_code: string;
@@ -497,4 +524,28 @@ export async function graduateTranscriptionTask(taskId: string, expertId: string
 
 export function getPromptBank(): Promise<PromptBankEntry[]> {
   return fetchJson<PromptBankEntry[]>(`/transcription/prompt-bank`)
+}
+
+export function getTranslationQueue(): Promise<TranslationQueueItem[]> {
+  return fetchJson<TranslationQueueItem[]>(`/transcription/translation-queue`)
+}
+
+export async function createOrUpdateTranslationTask(
+  taskId: string,
+  payload: TranslationTaskRequest,
+): Promise<TranslationTaskResponse> {
+  const response = await fetch(`${API_BASE}/transcription/tasks/${taskId}/translations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payloadBody.detail ?? 'Translation submission failed')
+  }
+
+  return response.json() as Promise<TranslationTaskResponse>
 }

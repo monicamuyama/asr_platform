@@ -10,11 +10,14 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  createOrUpdateTranslationTask,
   createTranscriptionValidation,
   getPromptBank,
+  getTranslationQueue,
   getTranscriptionQueue,
   graduateTranscriptionTask,
   type PromptBankEntry,
+  type TranslationQueueItem,
   type TranscriptionQueueItem,
   type TranscriptionTaskResponse,
   upsertTranscriptionTask,
@@ -25,6 +28,7 @@ export default function TranscriptionPage() {
   const router = useRouter()
   const [sessionUserId, setSessionUserId] = useState<string | null>(null)
   const [queue, setQueue] = useState<TranscriptionQueueItem[]>([])
+  const [translationQueue, setTranslationQueue] = useState<TranslationQueueItem[]>([])
   const [promptBank, setPromptBank] = useState<PromptBankEntry[]>([])
   const [selectedRecordingId, setSelectedRecordingId] = useState('')
   const [currentTask, setCurrentTask] = useState<TranscriptionTaskResponse | null>(null)
@@ -34,6 +38,8 @@ export default function TranscriptionPage() {
   const [isCorrect, setIsCorrect] = useState(true)
   const [suggestedCorrection, setSuggestedCorrection] = useState('')
   const [deepMeaning, setDeepMeaning] = useState('')
+  const [translationTargetCode, setTranslationTargetCode] = useState('ENG')
+  const [translatedText, setTranslatedText] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
@@ -44,8 +50,13 @@ export default function TranscriptionPage() {
 
   const loadData = async () => {
     try {
-      const [queueData, promptData] = await Promise.all([getTranscriptionQueue(), getPromptBank()])
+      const [queueData, translationData, promptData] = await Promise.all([
+        getTranscriptionQueue(),
+        getTranslationQueue(),
+        getPromptBank(),
+      ])
       setQueue(queueData)
+      setTranslationQueue(translationData)
       setPromptBank(promptData)
       setSelectedRecordingId((current) => current || queueData[0]?.recording_id || '')
     } catch (err) {
@@ -114,6 +125,32 @@ export default function TranscriptionPage() {
     }
   }
 
+  const saveTranslation = async () => {
+    if (!sessionUserId || !currentTask) {
+      setError('Create or update a transcription before translation.')
+      return
+    }
+    if (!translatedText.trim()) {
+      setError('Translated text is required.')
+      return
+    }
+
+    setError('')
+    setMessage('')
+    try {
+      await createOrUpdateTranslationTask(currentTask.id, {
+        transcription_id: currentTask.id,
+        translator_id: sessionUserId,
+        target_language_code: translationTargetCode,
+        translated_text: translatedText.trim(),
+      })
+      setMessage('Translation saved.')
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save translation.')
+    }
+  }
+
   const graduateTask = async () => {
     if (!sessionUserId || !currentTask) {
       setError('Create or update a transcription before graduation.')
@@ -169,6 +206,19 @@ export default function TranscriptionPage() {
 
         <Card className="border-border">
           <CardHeader>
+            <CardTitle>Translation Queue</CardTitle>
+            <CardDescription>Transcribed items waiting for translation.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-sm text-foreground">{translationQueue.length} transcription task(s) in translation pool.</p>
+            <p className="text-xs text-muted-foreground">
+              Latest item: {translationQueue[0]?.transcribed_text ?? 'No translated tasks yet.'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border">
+          <CardHeader>
             <CardTitle>Transcribe and Review</CardTitle>
             <CardDescription>Capture text, confidence, peer review, and cultural context.</CardDescription>
           </CardHeader>
@@ -204,6 +254,20 @@ export default function TranscriptionPage() {
             <div className="space-y-2">
               <Label htmlFor="meaning">Deep Cultural Meaning</Label>
               <Textarea id="meaning" rows={3} className="border-border resize-none" value={deepMeaning} onChange={(event) => setDeepMeaning(event.target.value)} />
+            </div>
+            <div className="space-y-2 rounded-xl border border-border p-4">
+              <p className="text-sm font-medium text-foreground">Translation</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="target-code">Target Language Code</Label>
+                  <Input id="target-code" value={translationTargetCode} onChange={(event) => setTranslationTargetCode(event.target.value.toUpperCase())} className="border-border" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="translated-text">Translated Text</Label>
+                  <Textarea id="translated-text" rows={2} className="border-border resize-none" value={translatedText} onChange={(event) => setTranslatedText(event.target.value)} />
+                </div>
+              </div>
+              <Button type="button" variant="outline" className="w-full border-border" onClick={saveTranslation}>Save Translation</Button>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <Button type="button" onClick={saveTranscription} className="bg-primary hover:bg-primary/90">Save Transcription</Button>
