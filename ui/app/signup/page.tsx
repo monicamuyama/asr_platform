@@ -12,9 +12,61 @@ import { Mail, Lock, User, ArrowLeft, CheckCircle } from 'lucide-react'
 import { API_BASE, type ConsentDocument, type Country, type Language, type SpeechCondition } from '@/lib/api'
 import { setSessionUserId } from '@/lib/auth'
 
+const SIGNUP_DRAFT_KEY = 'corpusweave_signup_draft'
+
+type SignupDraft = {
+  step: number
+  formData: {
+    name: string
+    email: string
+    password: string
+    languageId: string
+    countryId: string
+    hasSpeechImpairment: boolean
+    speechConditionId: string
+    speechConditionSeverity: 'mild' | 'moderate' | 'severe'
+    speechConditionNotes: string
+    speechConditionResearchConsent: boolean
+  }
+  acceptedConsentIds: string[]
+}
+
+function loadSignupDraft(): SignupDraft | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const rawDraft = window.sessionStorage.getItem(SIGNUP_DRAFT_KEY)
+  if (!rawDraft) {
+    return null
+  }
+
+  try {
+    return JSON.parse(rawDraft) as SignupDraft
+  } catch {
+    return null
+  }
+}
+
+function saveSignupDraft(draft: SignupDraft): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.sessionStorage.setItem(SIGNUP_DRAFT_KEY, JSON.stringify(draft))
+}
+
+function clearSignupDraft(): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.sessionStorage.removeItem(SIGNUP_DRAFT_KEY)
+}
+
 export default function SignUpPage() {
   const [step, setStep] = useState(1)
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => loadSignupDraft()?.formData ?? {
     name: '',
     email: '',
     password: '',
@@ -22,7 +74,7 @@ export default function SignUpPage() {
     countryId: '',
     hasSpeechImpairment: false,
     speechConditionId: '',
-    speechConditionSeverity: 'mild',
+    speechConditionSeverity: 'mild' as const,
     speechConditionNotes: '',
     speechConditionResearchConsent: false,
   })
@@ -30,9 +82,20 @@ export default function SignUpPage() {
   const [languages, setLanguages] = useState<Language[]>([])
   const [consents, setConsents] = useState<ConsentDocument[]>([])
   const [speechConditions, setSpeechConditions] = useState<SpeechCondition[]>([])
-  const [acceptedConsentIds, setAcceptedConsentIds] = useState<string[]>([])
+  const [acceptedConsentIds, setAcceptedConsentIds] = useState<string[]>(() => loadSignupDraft()?.acceptedConsentIds ?? [])
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    const draft = loadSignupDraft()
+    if (!draft) {
+      return
+    }
+
+    setStep(draft.step)
+    setFormData(draft.formData)
+    setAcceptedConsentIds(draft.acceptedConsentIds)
+  }, [])
 
   useEffect(() => {
     const loadReferenceData = async () => {
@@ -87,15 +150,22 @@ export default function SignUpPage() {
   }
 
   const toggleConsent = (documentId: string, accepted: boolean) => {
-    setAcceptedConsentIds((current) => {
-      if (accepted) {
-        return current.includes(documentId) ? current : [...current, documentId]
-      }
-      return current.filter((id) => id !== documentId)
-    })
+    setAcceptedConsentIds((current) =>
+      accepted
+        ? (current.includes(documentId) ? current : [...current, documentId])
+        : current.filter((id) => id !== documentId),
+    )
   }
 
-  const handleNext = (e: React.FormEvent) => {
+  const handleStepChange = (nextStep: number) => {
+    setStep(nextStep)
+  }
+
+  useEffect(() => {
+    saveSignupDraft({ step, formData, acceptedConsentIds })
+  }, [step, formData, acceptedConsentIds])
+
+  const handleStep1Submit = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
@@ -109,7 +179,11 @@ export default function SignUpPage() {
       return
     }
 
-    setStep(2)
+    handleStepChange(2)
+  }
+
+  const handleReturnToStep2 = () => {
+    handleStepChange(2)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -202,6 +276,7 @@ export default function SignUpPage() {
       const payload = (await response.json()) as { user?: { id?: string } }
       if (payload.user?.id) {
         setSessionUserId(payload.user.id)
+        clearSignupDraft()
       }
 
       setStep(3)
@@ -249,7 +324,7 @@ export default function SignUpPage() {
                 <CardDescription>Step 1 of 2: Basic Information</CardDescription>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleNext} className="space-y-4">
+                <form onSubmit={handleStep1Submit} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="name" className="text-sm font-medium">Full Name</Label>
                     <div className="relative">
@@ -455,7 +530,7 @@ export default function SignUpPage() {
                           />
                           <span className="text-sm text-foreground">
                             I agree to{' '}
-                            <Link href={document.document_url} className="font-medium text-primary hover:underline" target={document.document_url.startsWith('http') ? '_blank' : undefined} rel={document.document_url.startsWith('http') ? 'noreferrer' : undefined}>
+                            <Link href={document.document_url} className="font-medium text-primary hover:underline" onClick={handleReturnToStep2}>
                               {document.title}
                             </Link>
                             {document.version ? ` (${document.version})` : ''}
