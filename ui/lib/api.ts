@@ -97,9 +97,21 @@ export type SubmissionResponse = {
   id: string;
   contributor_id: string;
   language_code: string;
+  native_language_code: string;
+  target_language_code: string;
   mode: string;
+  category: string;
   speaker_profile: string;
   consent_version: string;
+  hometown: string | null;
+  residence: string | null;
+  tribe_ethnicity: string | null;
+  gender: string | null;
+  age_group: string | null;
+  pair_group_id: string | null;
+  riddle_part: string | null;
+  challenge_submission_id: string | null;
+  reveal_submission_id: string | null;
   audio_url: string | null;
   cid: string | null;
   target_word: string | null;
@@ -115,8 +127,15 @@ export type CommunityQueueItem = {
   id: string;
   contributor_id: string;
   language_code: string;
+  native_language_code: string;
+  target_language_code: string;
   mode: string;
+  category: string;
   speaker_profile: string;
+  pair_group_id: string | null;
+  riddle_part: string | null;
+  challenge_submission_id: string | null;
+  reveal_submission_id: string | null;
   target_word: string | null;
   read_prompt: string | null;
   image_prompt_url: string | null;
@@ -145,9 +164,21 @@ export type RatingHistoryItem = {
 export type SubmissionCreateRequest = {
   contributor_id: string;
   language_code: string;
+  native_language_code: string;
+  target_language_code: string;
   mode: 'prompted' | 'recording' | 'read_out' | 'spontaneous_image';
+  category: 'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description';
   speaker_profile: string;
   consent_version: string;
+  hometown?: string | null;
+  residence?: string | null;
+  tribe_ethnicity?: string | null;
+  gender?: string | null;
+  age_group?: string | null;
+  pair_group_id?: string | null;
+  riddle_part?: 'challenge' | 'reveal' | null;
+  challenge_submission_id?: string | null;
+  reveal_submission_id?: string | null;
   audio_url?: string | null;
   cid?: string | null;
   target_word?: string | null;
@@ -253,6 +284,7 @@ export async function createSubmission(payload: SubmissionCreateRequest): Promis
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(payload.cid ? { 'X-Idempotency-Key': payload.cid } : {}),
     },
     body: JSON.stringify(payload),
   })

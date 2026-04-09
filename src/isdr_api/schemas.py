@@ -33,9 +33,21 @@ class UserSchema(BaseModel):
 class SubmissionCreate(BaseModel):
     contributor_id: str = Field(min_length=1)
     language_code: str = Field(min_length=2)
+    native_language_code: Optional[str] = None
+    target_language_code: Optional[str] = None
     mode: Literal["prompted", "recording", "read_out", "spontaneous_image"]
+    category: Literal["proverb", "idiom", "common_saying", "riddle", "photo_description"] = "proverb"
     speaker_profile: str = Field(min_length=1)
     consent_version: str = Field(min_length=1)
+    hometown: Optional[str] = None
+    residence: Optional[str] = None
+    tribe_ethnicity: Optional[str] = None
+    gender: Optional[str] = None
+    age_group: Optional[str] = None
+    pair_group_id: Optional[str] = None
+    riddle_part: Optional[Literal["challenge", "reveal"]] = None
+    challenge_submission_id: Optional[str] = None
+    reveal_submission_id: Optional[str] = None
     audio_url: Optional[str] = None
     cid: Optional[str] = None
     target_word: Optional[str] = None
@@ -45,6 +57,11 @@ class SubmissionCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_requirements(self) -> "SubmissionCreate":
+        if not self.native_language_code:
+            self.native_language_code = self.language_code
+        if not self.target_language_code:
+            self.target_language_code = self.language_code
+
         if self.mode == "recording" and not self.target_word:
             raise ValueError("target_word is required for recording mode")
         if self.mode == "read_out":
@@ -59,6 +76,25 @@ class SubmissionCreate(BaseModel):
                 raise ValueError(
                     "spontaneous_instruction is required for spontaneous_image mode"
                 )
+
+        if self.category == "riddle":
+            if not self.riddle_part:
+                raise ValueError("riddle_part is required for riddle category")
+            if not self.pair_group_id:
+                raise ValueError("pair_group_id is required for riddle category")
+            if self.riddle_part == "reveal" and not self.challenge_submission_id:
+                raise ValueError("challenge_submission_id is required for riddle reveal")
+            if self.riddle_part == "challenge" and self.challenge_submission_id:
+                raise ValueError("challenge_submission_id must be empty for riddle challenge")
+        else:
+            if self.riddle_part:
+                raise ValueError("riddle_part is only allowed for riddle category")
+            if self.pair_group_id:
+                raise ValueError("pair_group_id is only allowed for riddle category")
+            if self.challenge_submission_id:
+                raise ValueError("challenge_submission_id is only allowed for riddle category")
+            if self.reveal_submission_id:
+                raise ValueError("reveal_submission_id is only allowed for riddle category")
         return self
 
 
@@ -66,9 +102,21 @@ class SubmissionSchema(BaseModel):
     id: str
     contributor_id: str
     language_code: str
+    native_language_code: str
+    target_language_code: str
     mode: str
+    category: str
     speaker_profile: str
     consent_version: str
+    hometown: Optional[str] = None
+    residence: Optional[str] = None
+    tribe_ethnicity: Optional[str] = None
+    gender: Optional[str] = None
+    age_group: Optional[str] = None
+    pair_group_id: Optional[str] = None
+    riddle_part: Optional[str] = None
+    challenge_submission_id: Optional[str] = None
+    reveal_submission_id: Optional[str] = None
     audio_url: Optional[str] = None
     cid: Optional[str] = None
     target_word: Optional[str] = None
@@ -99,8 +147,15 @@ class QueueItemSchema(BaseModel):
     id: str
     contributor_id: str
     language_code: str
+    native_language_code: str
+    target_language_code: str
     mode: str
+    category: str
     speaker_profile: str
+    pair_group_id: Optional[str] = None
+    riddle_part: Optional[str] = None
+    challenge_submission_id: Optional[str] = None
+    reveal_submission_id: Optional[str] = None
     target_word: Optional[str] = None
     read_prompt: Optional[str] = None
     image_prompt_url: Optional[str] = None

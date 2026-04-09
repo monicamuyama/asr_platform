@@ -33,12 +33,40 @@ def _ensure_runtime_schema() -> None:
             ("read_prompt", "TEXT"),
             ("image_prompt_url", "TEXT"),
             ("spontaneous_instruction", "TEXT"),
+            ("native_language_code", "TEXT"),
+            ("target_language_code", "TEXT"),
+            ("category", "TEXT"),
+            ("hometown", "TEXT"),
+            ("residence", "TEXT"),
+            ("tribe_ethnicity", "TEXT"),
+            ("gender", "TEXT"),
+            ("age_group", "TEXT"),
+            ("pair_group_id", "TEXT"),
+            ("riddle_part", "TEXT"),
+            ("challenge_submission_id", "TEXT"),
+            ("reveal_submission_id", "TEXT"),
         ]
         for column_name, column_type in missing_submission_columns:
             if column_name not in submission_columns:
                 connection.execute(
                     text(f"ALTER TABLE submissions ADD COLUMN {column_name} {column_type}")
                 )
+
+        connection.execute(
+            text(
+                "UPDATE submissions SET native_language_code = language_code "
+                "WHERE native_language_code IS NULL"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE submissions SET target_language_code = language_code "
+                "WHERE target_language_code IS NULL"
+            )
+        )
+        connection.execute(
+            text("UPDATE submissions SET category = 'proverb' WHERE category IS NULL")
+        )
 
         # Add district_id and tribe_ethnicity columns to user_demographics if missing
         if "district_id" not in demographics_columns:

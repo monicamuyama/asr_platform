@@ -1,6 +1,6 @@
 """Add complete research-grade schema
 
-Revision ID: 002
+Revision ID: 002_complete
 Revises: 001
 Create Date: 2026-04-01
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "002"
+revision: str = "002_complete"
 down_revision: str | None = "001"
 branch_labels = None
 depends_on = None

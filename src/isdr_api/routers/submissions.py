@@ -100,6 +100,18 @@ def _route_submission(submission_id: str, db: Session) -> RatingResultSchema:
 
 @router.post("", response_model=SubmissionSchema)
 def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) -> Submission:
+    if payload.cid:
+        existing_by_cid = (
+            db.query(Submission)
+            .filter(
+                Submission.contributor_id == payload.contributor_id,
+                Submission.cid == payload.cid,
+            )
+            .first()
+        )
+        if existing_by_cid is not None:
+            return existing_by_cid
+
     if payload.mode == "recording":
         normalized_target = _normalize_sentence(payload.target_word)
         existing_recordings = (
@@ -120,13 +132,40 @@ def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) 
                 detail="You have already submitted a recording for this sentence.",
             )
 
+    if payload.category == "riddle" and payload.riddle_part == "reveal":
+        challenge_submission = (
+            db.query(Submission)
+            .filter(Submission.id == payload.challenge_submission_id)
+            .first()
+        )
+        if challenge_submission is None:
+            raise HTTPException(status_code=400, detail="challenge_submission_id does not exist")
+        if challenge_submission.category != "riddle" or challenge_submission.riddle_part != "challenge":
+            raise HTTPException(status_code=400, detail="challenge_submission_id must reference a riddle challenge")
+        if challenge_submission.contributor_id != payload.contributor_id:
+            raise HTTPException(status_code=400, detail="challenge and reveal must belong to the same contributor")
+        if challenge_submission.pair_group_id != payload.pair_group_id:
+            raise HTTPException(status_code=400, detail="challenge and reveal must share the same pair_group_id")
+
     submission = Submission(
         id=str(uuid.uuid4()),
         contributor_id=payload.contributor_id,
         language_code=payload.language_code,
+        native_language_code=payload.native_language_code or payload.language_code,
+        target_language_code=payload.target_language_code or payload.language_code,
         mode=payload.mode,
+        category=payload.category,
         speaker_profile=payload.speaker_profile,
         consent_version=payload.consent_version,
+        hometown=payload.hometown,
+        residence=payload.residence,
+        tribe_ethnicity=payload.tribe_ethnicity,
+        gender=payload.gender,
+        age_group=payload.age_group,
+        pair_group_id=payload.pair_group_id,
+        riddle_part=payload.riddle_part,
+        challenge_submission_id=payload.challenge_submission_id,
+        reveal_submission_id=payload.reveal_submission_id,
         audio_url=payload.audio_url,
         cid=payload.cid,
         target_word=payload.target_word,
@@ -138,6 +177,17 @@ def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) 
         created_at=datetime.now(timezone.utc),
     )
     db.add(submission)
+    db.flush()
+
+    if payload.category == "riddle" and payload.riddle_part == "reveal" and payload.challenge_submission_id:
+        challenge_submission = (
+            db.query(Submission)
+            .filter(Submission.id == payload.challenge_submission_id)
+            .first()
+        )
+        if challenge_submission:
+            challenge_submission.reveal_submission_id = submission.id
+
     _credit_wallet(db, payload.contributor_id, REWARD_PER_RECORDING)
     db.commit()
     db.refresh(submission)
@@ -162,8 +212,15 @@ def list_community_queue(db: Session = Depends(get_db)) -> list[dict[str, object
             "id": submission.id,
             "contributor_id": submission.contributor_id,
             "language_code": submission.language_code,
+            "native_language_code": submission.native_language_code,
+            "target_language_code": submission.target_language_code,
             "mode": submission.mode,
+            "category": submission.category,
             "speaker_profile": submission.speaker_profile,
+            "pair_group_id": submission.pair_group_id,
+            "riddle_part": submission.riddle_part,
+            "challenge_submission_id": submission.challenge_submission_id,
+            "reveal_submission_id": submission.reveal_submission_id,
             "target_word": submission.target_word,
             "read_prompt": submission.read_prompt,
             "image_prompt_url": submission.image_prompt_url,

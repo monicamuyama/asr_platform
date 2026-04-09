@@ -1,7 +1,7 @@
 """Add linguistic DNA schema with districts and tribal ethnicity
 
 Revision ID: 003
-Revises: 002
+Revises: 002_complete
 Create Date: 2026-04-15
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "003"
-down_revision: str | None = "002"
+down_revision: str | None = "002_complete"
 branch_labels = None
 depends_on = None
 

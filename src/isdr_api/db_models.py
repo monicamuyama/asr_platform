@@ -25,9 +25,25 @@ class Submission(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     contributor_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     language_code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    native_language_code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    target_language_code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    category: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     speaker_profile: Mapped[str] = mapped_column(String(255), nullable=False)
     consent_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    hometown: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    residence: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tribe_ethnicity: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    age_group: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    pair_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    riddle_part: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    challenge_submission_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("submissions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reveal_submission_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("submissions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     target_word: Mapped[str | None] = mapped_column(String(255), nullable=True)
     read_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_prompt_url: Mapped[str | None] = mapped_column(Text, nullable=True)

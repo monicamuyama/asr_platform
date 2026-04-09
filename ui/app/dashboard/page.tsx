@@ -12,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Mic, Headphones, FileText, Trophy, Play, Pause, Volume2, Star, LogOut, Settings, TrendingUp, Users } from 'lucide-react'
 import Link from 'next/link'
+import { RiddleLinkedRecorder } from '@/components/riddle-linked-recorder'
+import { flushQueuedSubmissions, listQueuedSubmissions, queueSubmission } from '@/lib/offline-submission-queue'
 import {
   createCommunityRating,
   createSubmission,
@@ -28,6 +30,7 @@ import {
   type ConsentDocument,
   type Language,
   type RatingHistoryItem,
+  type SubmissionCreateRequest,
   type SubmissionResponse,
   type UserLanguagePreferenceResponse,
   type UserProfileResponse,
@@ -55,6 +58,7 @@ export default function CorpusWeaveDashboard() {
   const [submissions, setSubmissions] = useState<SubmissionResponse[]>([])
   const [ratingHistory, setRatingHistory] = useState<RatingHistoryItem[]>([])
   const [targetLanguageId, setTargetLanguageId] = useState('')
+  const [selectedCategory, setSelectedCategory] = useState<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description'>('proverb')
   const [selectedQueueSubmissionId, setSelectedQueueSubmissionId] = useState('')
   const [selectedRating, setSelectedRating] = useState(3)
   const [validationScores, setValidationScores] = useState({
@@ -64,6 +68,8 @@ export default function CorpusWeaveDashboard() {
   })
   const [isRecording, setIsRecording] = useState(false)
   const [isSubmittingRecording, setIsSubmittingRecording] = useState(false)
+  const [isRetryingUploads, setIsRetryingUploads] = useState(false)
+  const [queuedUploadCount, setQueuedUploadCount] = useState(0)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null)
   const [recordedAudioDataUrl, setRecordedAudioDataUrl] = useState<string | null>(null)
@@ -184,6 +190,82 @@ export default function CorpusWeaveDashboard() {
     void loadDashboardData()
   }, [router])
 
+  const refreshQueuedUploadCount = async () => {
+    try {
+      const queuedItems = await listQueuedSubmissions()
+      setQueuedUploadCount(queuedItems.length)
+    } catch {
+      setQueuedUploadCount(0)
+    }
+  }
+
+  const requestBackgroundSync = async () => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+      return
+    }
+    const registration = await navigator.serviceWorker.ready
+    if ('sync' in registration) {
+      await (registration as ServiceWorkerRegistration & { sync: { register: (tag: string) => Promise<void> } })
+        .sync
+        .register('submission-upload-sync')
+    } else {
+      registration.active?.postMessage({ type: 'REQUEST_UPLOAD_SYNC' })
+    }
+  }
+
+  const retryQueuedUploads = async () => {
+    if (!sessionUserId) {
+      return
+    }
+    setIsRetryingUploads(true)
+    setSubmissionMessage('')
+    try {
+      const result = await flushQueuedSubmissions()
+      await refreshQueuedUploadCount()
+      if (result.uploaded > 0) {
+        setSubmissionMessage(`Retried uploads: ${result.uploaded} succeeded, ${result.failed} pending.`)
+      } else if (result.failed > 0) {
+        setRecordingError(`Retry attempted but ${result.failed} uploads are still pending.`)
+      }
+      await Promise.all([refreshCommunityQueue(), refreshSubmissions(), refreshRatingHistory(sessionUserId), refreshWallet(sessionUserId)])
+    } catch (err) {
+      setRecordingError(err instanceof Error ? err.message : 'Retry upload failed.')
+    } finally {
+      setIsRetryingUploads(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshQueuedUploadCount()
+
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+      return
+    }
+
+    navigator.serviceWorker
+      .register('/upload-sync-sw.js')
+      .catch(() => {
+        // Service worker registration is best-effort for offline retries.
+      })
+
+    const handleOnline = () => {
+      void retryQueuedUploads()
+    }
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'UPLOAD_SYNC_REQUESTED') {
+        void retryQueuedUploads()
+      }
+    }
+
+    window.addEventListener('online', handleOnline)
+    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage)
+
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage)
+    }
+  }, [sessionUserId])
+
   useEffect(() => {
     return () => {
       if (recordingTimerRef.current) {
@@ -204,7 +286,14 @@ export default function CorpusWeaveDashboard() {
   }, [user])
 
   const userLanguage = profile?.primary_language ?? 'Not set'
-  const recordPrompt = 'The future is built by those who contribute today.'
+  const recordPromptByCategory: Record<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description', string> = {
+    proverb: 'The future is built by those who contribute today.',
+    idiom: 'A river does not forget its source.',
+    common_saying: 'Many hands make light work.',
+    riddle: 'What has roots that nobody sees and grows taller than trees?',
+    photo_description: 'Describe what you see in the assigned image with clear detail.',
+  }
+  const recordPrompt = recordPromptByCategory[selectedCategory]
   const activeConsentVersion = consents.find((document) => document.is_active)?.version ?? consents[0]?.version ?? 'v1.0'
   const primaryLanguagePreference =
     languagePreferences.find((preference) => preference.is_primary_language)
@@ -219,6 +308,7 @@ export default function CorpusWeaveDashboard() {
     ?? primaryLanguageInfo
     ?? languages[0]
     ?? null
+  const nativeLanguageCode = primaryLanguageInfo?.iso_code ?? selectedTargetLanguage?.iso_code ?? 'en'
   const ratedSubmissionIds = useMemo(
     () => new Set(ratingHistory.map((item) => item.submission_id)),
     [ratingHistory],
@@ -375,16 +465,35 @@ export default function CorpusWeaveDashboard() {
     setSubmissionMessage('')
 
     try {
-      const submission = await createSubmission({
+      const payload: SubmissionCreateRequest = {
         contributor_id: sessionUserId,
         language_code: selectedTargetLanguage.iso_code,
-        mode: 'recording',
+        native_language_code: nativeLanguageCode,
+        target_language_code: selectedTargetLanguage.iso_code,
+        mode: selectedCategory === 'photo_description' ? 'spontaneous_image' : 'recording',
+        category: selectedCategory,
         speaker_profile: speakerProfile,
         consent_version: activeConsentVersion,
+        hometown: null,
+        residence: profile?.country ?? null,
+        tribe_ethnicity: null,
+        gender: null,
+        age_group: null,
+        pair_group_id: selectedCategory === 'riddle' ? crypto.randomUUID() : null,
+        riddle_part: selectedCategory === 'riddle' ? 'challenge' : null,
+        challenge_submission_id: null,
+        reveal_submission_id: null,
         audio_url: recordedAudioDataUrl,
         target_word: recordPrompt,
-        read_prompt: recordPrompt,
-      })
+        read_prompt: selectedCategory === 'photo_description' ? null : recordPrompt,
+        image_prompt_url: selectedCategory === 'photo_description' ? 'local-photo-assignment' : null,
+        spontaneous_instruction:
+          selectedCategory === 'photo_description'
+            ? 'Describe the assigned image naturally in your own words.'
+            : null,
+      }
+
+      const submission = await createSubmission(payload)
 
       setSubmissionMessage(`Recording submitted as ${submission.id}`)
       await Promise.all([refreshCommunityQueue(submission.id), refreshSubmissions(), refreshRatingHistory(sessionUserId), refreshWallet(sessionUserId)])
@@ -394,7 +503,46 @@ export default function CorpusWeaveDashboard() {
       setRecordingDuration(0)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to submit recording.'
-      if (/404/i.test(message) || /not found/i.test(message)) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        try {
+          await queueSubmission({
+            contributor_id: sessionUserId,
+            language_code: selectedTargetLanguage.iso_code,
+            native_language_code: nativeLanguageCode,
+            target_language_code: selectedTargetLanguage.iso_code,
+            mode: selectedCategory === 'photo_description' ? 'spontaneous_image' : 'recording',
+            category: selectedCategory,
+            speaker_profile: speakerProfile,
+            consent_version: activeConsentVersion,
+            hometown: null,
+            residence: profile?.country ?? null,
+            tribe_ethnicity: null,
+            gender: null,
+            age_group: null,
+            pair_group_id: selectedCategory === 'riddle' ? crypto.randomUUID() : null,
+            riddle_part: selectedCategory === 'riddle' ? 'challenge' : null,
+            challenge_submission_id: null,
+            reveal_submission_id: null,
+            audio_url: recordedAudioDataUrl,
+            target_word: recordPrompt,
+            read_prompt: selectedCategory === 'photo_description' ? null : recordPrompt,
+            image_prompt_url: selectedCategory === 'photo_description' ? 'local-photo-assignment' : null,
+            spontaneous_instruction:
+              selectedCategory === 'photo_description'
+                ? 'Describe the assigned image naturally in your own words.'
+                : null,
+          })
+          await refreshQueuedUploadCount()
+          await requestBackgroundSync()
+          setSubmissionMessage('No connection. Recording saved locally and queued for retry upload.')
+          stopRecording()
+          setRecordedAudioUrl(null)
+          setRecordedAudioDataUrl(null)
+          setRecordingDuration(0)
+        } catch (queueErr) {
+          setRecordingError(queueErr instanceof Error ? queueErr.message : 'Could not queue recording for retry.')
+        }
+      } else if (/404/i.test(message) || /not found/i.test(message)) {
         setRecordingError('Submission endpoint is unavailable (404). Ensure backend routes include /submissions and the API server is restarted.')
       } else if (/already submitted a recording for this sentence/i.test(message)) {
         setRecordingError('You already submitted this sentence. Please record a different prompt.')
@@ -403,6 +551,98 @@ export default function CorpusWeaveDashboard() {
       }
     } finally {
       setIsSubmittingRecording(false)
+    }
+  }
+
+  const submitLinkedRiddlePair = async (payload: { challengeAudioDataUrl: string; revealAudioDataUrl: string }) => {
+    if (!sessionUserId) {
+      clearSession()
+      router.replace('/signin')
+      return
+    }
+
+    if (!selectedTargetLanguage) {
+      throw new Error('Could not load a target language. Update your language in Settings and try again.')
+    }
+
+    const pairGroupId = crypto.randomUUID()
+    const challengePayload: SubmissionCreateRequest = {
+      contributor_id: sessionUserId,
+      language_code: selectedTargetLanguage.iso_code,
+      native_language_code: nativeLanguageCode,
+      target_language_code: selectedTargetLanguage.iso_code,
+      mode: 'recording',
+      category: 'riddle',
+      speaker_profile: speakerProfile,
+      consent_version: activeConsentVersion,
+      hometown: null,
+      residence: profile?.country ?? null,
+      tribe_ethnicity: null,
+      gender: null,
+      age_group: null,
+      pair_group_id: pairGroupId,
+      riddle_part: 'challenge',
+      challenge_submission_id: null,
+      reveal_submission_id: null,
+      audio_url: payload.challengeAudioDataUrl,
+      target_word: recordPrompt,
+      read_prompt: recordPrompt,
+    }
+
+    const revealPayloadBase: SubmissionCreateRequest = {
+      contributor_id: sessionUserId,
+      language_code: selectedTargetLanguage.iso_code,
+      native_language_code: nativeLanguageCode,
+      target_language_code: selectedTargetLanguage.iso_code,
+      mode: 'recording',
+      category: 'riddle',
+      speaker_profile: speakerProfile,
+      consent_version: activeConsentVersion,
+      hometown: null,
+      residence: profile?.country ?? null,
+      tribe_ethnicity: null,
+      gender: null,
+      age_group: null,
+      pair_group_id: pairGroupId,
+      riddle_part: 'reveal' as const,
+      reveal_submission_id: null,
+      audio_url: payload.revealAudioDataUrl,
+      target_word: recordPrompt,
+      read_prompt: recordPrompt,
+    }
+
+    try {
+      const challengeSubmission = await createSubmission(challengePayload)
+
+      await createSubmission({
+        ...revealPayloadBase,
+        challenge_submission_id: challengeSubmission.id,
+      })
+
+      setSubmissionMessage(`Linked riddle pair submitted under group ${pairGroupId.slice(0, 8)}.`)
+      await Promise.all([
+        refreshCommunityQueue(challengeSubmission.id),
+        refreshSubmissions(),
+        refreshRatingHistory(sessionUserId),
+        refreshWallet(sessionUserId),
+      ])
+    } catch (err) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        await queueSubmission({
+          ...challengePayload,
+          cid: `${pairGroupId}-challenge`,
+        })
+        await queueSubmission({
+          ...revealPayloadBase,
+          cid: `${pairGroupId}-reveal`,
+          challenge_submission_id: null,
+        })
+        await refreshQueuedUploadCount()
+        await requestBackgroundSync()
+        setSubmissionMessage('No connection. Riddle pair saved locally and queued for retry upload.')
+      } else {
+        throw err
+      }
     }
   }
 
@@ -596,16 +836,66 @@ export default function CorpusWeaveDashboard() {
 
           {/* Contribute Tab */}
           <TabsContent value="contribute" className="space-y-8">
+            <Card className="border-border">
+              <CardHeader>
+                <CardTitle>Choose Contribution Category</CardTitle>
+                <CardDescription>
+                  Select a category to route to the right recording flow. Riddles are captured as linked challenge/reveal pairs.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+                  {[
+                    { key: 'proverb', label: 'Proverb' },
+                    { key: 'idiom', label: 'Idiom' },
+                    { key: 'common_saying', label: 'Common Saying' },
+                    { key: 'riddle', label: 'Riddle' },
+                    { key: 'photo_description', label: 'Photo Description' },
+                  ].map((item) => (
+                    <Button
+                      key={item.key}
+                      type="button"
+                      variant={selectedCategory === item.key ? 'default' : 'outline'}
+                      className="h-auto py-3"
+                      onClick={() => setSelectedCategory(item.key as 'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description')}
+                    >
+                      {item.label}
+                    </Button>
+                  ))}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                  <span>{queuedUploadCount} queued upload{queuedUploadCount === 1 ? '' : 's'} pending sync</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="border-border"
+                    onClick={retryQueuedUploads}
+                    disabled={isRetryingUploads || queuedUploadCount === 0}
+                  >
+                    {isRetryingUploads ? 'Retrying uploads...' : 'Retry Upload'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
               <Card className="border-border lg:col-span-1">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Mic className="h-5 w-5 text-primary" />
-                    Record Audio
+                    {selectedCategory === 'riddle' ? 'Record Riddle Challenge' : 'Record Audio'}
                   </CardTitle>
                   <CardDescription>Contribute voice data in your language</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {selectedCategory === 'riddle' ? (
+                    <RiddleLinkedRecorder
+                      draftKey={sessionUserId ? `isdr_riddle_pair_draft_${sessionUserId}` : 'isdr_riddle_pair_draft'}
+                      disabled={!selectedTargetLanguage}
+                      onSubmitPair={submitLinkedRiddlePair}
+                    />
+                  ) : (
+                    <>
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Target Language</Label>
                     <Select
@@ -668,6 +958,8 @@ export default function CorpusWeaveDashboard() {
                   >
                     {isSubmittingRecording ? 'Submitting...' : 'Submit Recording'}
                   </Button>
+                    </>
+                  )}
                   {recordingError && <p className="text-sm text-red-600">{recordingError}</p>}
                   {submissionMessage && <p className="text-sm text-foreground">{submissionMessage}</p>}
                 </CardContent>
