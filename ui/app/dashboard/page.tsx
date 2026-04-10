@@ -350,6 +350,7 @@ export default function CorpusWeaveDashboard() {
     ?? languages[0]
     ?? null
   const selectedTargetLanguageCode = (selectedTargetLanguage?.iso_code ?? primaryLanguageInfo?.iso_code ?? 'ENG').toUpperCase()
+  const selectedTargetLanguageName = selectedTargetLanguage?.language_name ?? 'this language'
   const categoryLabelsByLanguage: Record<string, Record<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description', string>> = {
     LG: {
       proverb: 'Olugero',
@@ -415,7 +416,14 @@ export default function CorpusWeaveDashboard() {
       photo_description: 'Photo Description',
     },
   }
-  const localizedCategoryLabels = categoryLabelsByLanguage[selectedTargetLanguageCode] ?? categoryLabelsByLanguage.ENG
+  const localizedCategoryLabels =
+    categoryLabelsByLanguage[selectedTargetLanguageCode] ?? {
+      proverb: `${selectedTargetLanguageName} proverb`,
+      idiom: `${selectedTargetLanguageName} idiom`,
+      common_saying: `${selectedTargetLanguageName} common saying`,
+      riddle: `${selectedTargetLanguageName} riddle`,
+      photo_description: `${selectedTargetLanguageName} photo description`,
+    }
 
   const recordPromptByLanguage: Record<string, Record<'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description', string>> = {
     LG: {
@@ -482,7 +490,15 @@ export default function CorpusWeaveDashboard() {
       photo_description: 'Describe the image in Lugbara with clear detail.',
     },
   }
-  const recordPrompt = (recordPromptByLanguage[selectedTargetLanguageCode] ?? recordPromptByLanguage.ENG)[selectedCategory]
+  const recordPrompt = (
+    recordPromptByLanguage[selectedTargetLanguageCode] ?? {
+      proverb: `Record a proverb in ${selectedTargetLanguageName}.`,
+      idiom: `Record an idiom in ${selectedTargetLanguageName}.`,
+      common_saying: `Record a common saying in ${selectedTargetLanguageName}.`,
+      riddle: `Record a riddle in ${selectedTargetLanguageName}.`,
+      photo_description: `Describe the image in ${selectedTargetLanguageName}.`,
+    }
+  )[selectedCategory]
   const nativeLanguageCode = primaryLanguageInfo?.iso_code ?? selectedTargetLanguage?.iso_code ?? 'en'
   const ratedSubmissionIds = useMemo(
     () => new Set(ratingHistory.map((item) => item.submission_id)),
@@ -1106,7 +1122,7 @@ export default function CorpusWeaveDashboard() {
                 <div className="mb-4 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
                   You are contributing in <strong>{selectedTargetLanguage?.language_name ?? userLanguage}</strong>. The category labels and prompts below follow that language.
                 </div>
-                <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
                   {[
                     { key: 'proverb', label: localizedCategoryLabels.proverb },
                     { key: 'idiom', label: localizedCategoryLabels.idiom },
@@ -1118,7 +1134,7 @@ export default function CorpusWeaveDashboard() {
                       key={item.key}
                       type="button"
                       variant={selectedCategory === item.key ? 'default' : 'outline'}
-                      className="h-auto py-3"
+                      className="h-auto min-h-14 whitespace-normal px-3 py-3 text-center leading-snug"
                       onClick={() => setSelectedCategory(item.key as 'proverb' | 'idiom' | 'common_saying' | 'riddle' | 'photo_description')}
                     >
                       {item.label}
@@ -1140,7 +1156,7 @@ export default function CorpusWeaveDashboard() {
               </CardContent>
             </Card>
 
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
               <Card className="border-border lg:col-span-1">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -1178,7 +1194,7 @@ export default function CorpusWeaveDashboard() {
                   </div>
                   <div className="bg-muted/50 rounded-xl p-6 text-center space-y-4">
                     <p className="font-medium text-foreground">Sentence to record:</p>
-                    <p className="text-lg text-foreground italic">
+                    <p className="break-words text-base italic text-foreground sm:text-lg">
                       "{recordPrompt}"
                     </p>
                   </div>

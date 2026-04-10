@@ -171,12 +171,12 @@ export default function TranscriptionPage() {
   return (
     <div className="min-h-screen bg-background px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Transcription Task Dashboard</h1>
             <p className="text-sm text-muted-foreground">Queue, transcribe, peer review, and graduate prompts.</p>
           </div>
-          <Link href="/dashboard">
+          <Link href="/dashboard" className="ml-auto">
             <Button variant="outline" className="border-border">Back to Dashboard</Button>
           </Link>
         </div>
@@ -227,7 +227,7 @@ export default function TranscriptionPage() {
               <Label htmlFor="transcript">Transcription</Label>
               <Textarea id="transcript" rows={4} className="border-border resize-none" value={transcriptionText} onChange={(event) => setTranscriptionText(event.target.value)} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="confidence">Confidence (0-1)</Label>
                 <Input id="confidence" type="number" min="0" max="1" step="0.05" value={confidenceScore} onChange={(event) => setConfidenceScore(Number(event.target.value))} className="border-border" />
@@ -257,7 +257,7 @@ export default function TranscriptionPage() {
             </div>
             <div className="space-y-2 rounded-xl border border-border p-4">
               <p className="text-sm font-medium text-foreground">Translation</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="target-code">Target Language Code</Label>
                   <Input id="target-code" value={translationTargetCode} onChange={(event) => setTranslationTargetCode(event.target.value.toUpperCase())} className="border-border" />

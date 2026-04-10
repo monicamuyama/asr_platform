@@ -13,17 +13,17 @@ export default function HomePage() {
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-teal font-bold text-white">
                 CW
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-foreground">CorpusWeave</h1>
-                <p className="text-xs text-muted-foreground">Community Speech Data Platform</p>
+              <div className="min-w-0">
+                <h1 className="truncate text-xl font-bold text-foreground sm:text-2xl">CorpusWeave</h1>
+                <p className="truncate text-xs text-muted-foreground">Community Speech Data Platform</p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex w-full items-center justify-end gap-2 sm:w-auto sm:gap-3">
               <Link href="/donate">
                 <Button variant="ghost" size="sm">Support</Button>
               </Link>
