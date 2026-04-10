@@ -109,6 +109,16 @@ export type UserLanguagePreferenceResponse = {
   proficiency_level: string;
 };
 
+export type UserLanguagePreferenceUpdateRequest = {
+  language_id: string;
+  dialect_id?: string | null;
+  is_primary_language: boolean;
+  can_record?: boolean;
+  can_transcribe?: boolean;
+  can_validate?: boolean;
+  proficiency_level?: 'native' | 'fluent' | 'intermediate' | 'beginner';
+};
+
 export type SubmissionResponse = {
   id: string;
   contributor_id: string;
@@ -187,6 +197,8 @@ export type TranscriptionQueueItem = {
   speaker_type: string;
   transcript_count: number;
   validation_count: number;
+  eligible_validator_ids: string[];
+  eligible_validator_count: number;
   latest_transcription: string | null;
   latest_confidence_score: number | null;
   prompt_text: string | null;
@@ -402,6 +414,26 @@ export function getUserWalletById(userId: string): Promise<WalletResponse> {
 
 export function getUserLanguagePreferencesById(userId: string): Promise<UserLanguagePreferenceResponse[]> {
   return fetchJson<UserLanguagePreferenceResponse[]>(`/auth/users/${userId}/language-preferences`);
+}
+
+export async function updateUserLanguagePreferencesById(
+  userId: string,
+  preferences: UserLanguagePreferenceUpdateRequest[],
+): Promise<UserLanguagePreferenceResponse[]> {
+  const response = await fetch(`${API_BASE}/auth/users/${userId}/language-preferences`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ language_preferences: preferences }),
+  })
+
+  if (!response.ok) {
+    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payloadBody.detail ?? 'Language preferences update failed')
+  }
+
+  return response.json() as Promise<UserLanguagePreferenceResponse[]>
 }
 
 export function getConsentDocuments(): Promise<ConsentDocument[]> {

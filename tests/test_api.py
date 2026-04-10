@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from isdr_api.database import Base, get_db
 from isdr_api.db_models import Base as LegacyBase
-from isdr_api.db_models_extended import Language, User, UserLanguagePreference
+from isdr_api.db_models_extended import Language, User, UserLanguagePreference, Wallet
 from isdr_api.main import app
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -132,6 +132,8 @@ def _seed_transcription_user(
     can_transcribe: bool = False,
     can_validate: bool = False,
     language_iso: str = "LG",
+    is_primary_language: bool = True,
+    proficiency_level: str = "native",
 ) -> None:
     db = TestingSessionLocal()
     try:
@@ -169,18 +171,102 @@ def _seed_transcription_user(
             preference = UserLanguagePreference(
                 user_id=user_id,
                 language_id=language.id,
-                is_primary_language=True,
+                is_primary_language=is_primary_language,
                 can_record=True,
                 can_transcribe=can_transcribe,
                 can_validate=can_validate,
-                proficiency_level="native",
+                proficiency_level=proficiency_level,
             )
             db.add(preference)
         else:
+            preference.is_primary_language = is_primary_language
             preference.can_transcribe = can_transcribe
             preference.can_validate = can_validate
+            preference.proficiency_level = proficiency_level
 
         db.commit()
+    finally:
+        db.close()
+
+
+def _seed_user_with_language_preferences(user_id: str, preferences: list[dict]) -> None:
+    db = TestingSessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            user = User(
+                id=user_id,
+                full_name=f"{user_id} Tester",
+                email=f"{user_id}@example.com",
+                role="contributor",
+                auth_provider="local",
+                is_verified=True,
+                onboarding_completed=True,
+            )
+            db.add(user)
+            db.flush()
+
+        for pref in preferences:
+            language = db.query(Language).filter(Language.iso_code == pref["language_iso"]).first()
+            if language is None:
+                language = Language(
+                    language_name=pref["language_iso"],
+                    iso_code=pref["language_iso"],
+                    is_low_resource=True,
+                )
+                db.add(language)
+                db.flush()
+
+            existing = (
+                db.query(UserLanguagePreference)
+                .filter(
+                    UserLanguagePreference.user_id == user_id,
+                    UserLanguagePreference.language_id == language.id,
+                )
+                .first()
+            )
+            if existing is None:
+                existing = UserLanguagePreference(
+                    user_id=user_id,
+                    language_id=language.id,
+                    is_primary_language=pref.get("is_primary_language", False),
+                    can_record=pref.get("can_record", True),
+                    can_transcribe=pref.get("can_transcribe", False),
+                    can_validate=pref.get("can_validate", False),
+                    proficiency_level=pref.get("proficiency_level", "native"),
+                )
+                db.add(existing)
+            else:
+                existing.is_primary_language = pref.get("is_primary_language", False)
+                existing.can_record = pref.get("can_record", True)
+                existing.can_transcribe = pref.get("can_transcribe", False)
+                existing.can_validate = pref.get("can_validate", False)
+                existing.proficiency_level = pref.get("proficiency_level", "native")
+
+        db.commit()
+    finally:
+        db.close()
+
+
+def _get_wallet_balance(user_id: str) -> float:
+    db = TestingSessionLocal()
+    try:
+        wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+        return float(wallet.balance) if wallet is not None else 0.0
+    finally:
+        db.close()
+
+
+def _get_language_id(language_iso: str) -> str:
+    db = TestingSessionLocal()
+    try:
+        language = db.query(Language).filter(Language.iso_code == language_iso).first()
+        if language is None:
+            language = Language(language_name=language_iso, iso_code=language_iso, is_low_resource=True)
+            db.add(language)
+            db.commit()
+            db.refresh(language)
+        return language.id
     finally:
         db.close()
 
@@ -246,7 +332,9 @@ def test_spontaneous_image_submission_requires_image_fields():
 
 
 def test_audio_submission_enters_transcription_queue():
-    _seed_transcription_user("c_audio", can_transcribe=True, can_validate=True)
+    _seed_transcription_user("c_audio", can_transcribe=True, can_validate=False)
+    _seed_transcription_user("validator_lg", can_transcribe=False, can_validate=True, language_iso="LG")
+    _seed_transcription_user("validator_en", can_transcribe=False, can_validate=True, language_iso="EN")
 
     response = client.post(
         "/submissions",
@@ -268,6 +356,154 @@ def test_audio_submission_enters_transcription_queue():
     queue = queue_response.json()
     assert len(queue) == 1
     assert queue[0]["audio_url"] == "data:audio/webm;base64,AAAA"
+    assert queue[0]["eligible_validator_count"] == 1
+    assert queue[0]["eligible_validator_ids"] == ["validator_lg"]
+
+
+def test_recording_requires_declared_language():
+    response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_undeclared",
+            "language_code": "lg",
+            "mode": "recording",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "target_word": "The river bends but does not break",
+            "audio_url": "data:audio/webm;base64,CCCC",
+            "category": "proverb",
+        },
+    )
+    assert response.status_code == 403
+    assert "declared this language" in response.json()["detail"]
+
+
+def test_secondary_language_recording_uses_lower_reward():
+    _seed_user_with_language_preferences(
+        "c_secondary",
+        [
+            {
+                "language_iso": "LG",
+                "is_primary_language": True,
+                "can_record": True,
+                "can_validate": True,
+                "proficiency_level": "native",
+            },
+            {
+                "language_iso": "LSG",
+                "is_primary_language": False,
+                "can_record": True,
+                "can_validate": True,
+                "proficiency_level": "fluent",
+            },
+        ],
+    )
+
+    response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_secondary",
+            "language_code": "lsg",
+            "mode": "recording",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "target_word": "Language communities carry memory",
+            "audio_url": "data:audio/webm;base64,DDDD",
+            "category": "proverb",
+        },
+    )
+    assert response.status_code == 200
+    assert _get_wallet_balance("c_secondary") == 8.0
+
+
+def test_secondary_language_preferences_require_fluency():
+    _seed_user_with_language_preferences(
+        "pref_user",
+        [
+            {
+                "language_iso": "LG",
+                "is_primary_language": True,
+                "can_validate": True,
+                "proficiency_level": "native",
+            }
+        ],
+    )
+
+    response = client.put(
+        "/auth/users/pref_user/language-preferences",
+        json={
+            "language_preferences": [
+                {
+                    "language_id": _get_language_id("LG"),
+                    "is_primary_language": True,
+                    "can_record": True,
+                    "can_transcribe": True,
+                    "can_validate": True,
+                },
+                {
+                    "language_id": _get_language_id("LSG"),
+                    "is_primary_language": False,
+                    "can_record": True,
+                    "can_transcribe": True,
+                    "can_validate": True,
+                },
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_community_rater_must_speak_submission_language():
+    _seed_user_with_language_preferences(
+        "c_match",
+        [
+            {
+                "language_iso": "LG",
+                "is_primary_language": True,
+                "can_record": True,
+                "can_validate": True,
+                "proficiency_level": "native",
+            }
+        ],
+    )
+    _seed_user_with_language_preferences(
+        "rater_en",
+        [
+            {
+                "language_iso": "EN",
+                "is_primary_language": True,
+                "can_validate": True,
+                "proficiency_level": "native",
+            }
+        ],
+    )
+
+    submission = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "c_match",
+            "language_code": "lg",
+            "mode": "recording",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "target_word": "Wisdom is found in many hearts",
+            "audio_url": "data:audio/webm;base64,EEEE",
+            "category": "proverb",
+        },
+    ).json()
+
+    rating_response = client.post(
+        f"/submissions/{submission['id']}/ratings",
+        json={
+            "submission_id": submission["id"],
+            "rater_id": "rater_en",
+            "intelligibility": 5,
+            "recording_quality": 5,
+            "elicitation_compliance": 5,
+        },
+    )
+    assert rating_response.status_code == 403
+    assert rating_response.json()["detail"] == "No language preference configured for this task"
 
 
 def test_transcription_validation_and_graduation_flow():

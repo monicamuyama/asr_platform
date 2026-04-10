@@ -206,9 +206,24 @@ export default function CorpusWeaveDashboard() {
         setLanguages(languageData)
         setConsents(consentData)
 
+        const configuredLanguageOptions = languagePrefData
+          .map((preference) => {
+            const language = languageData.find((item) => item.id === preference.language_id)
+            if (!language) {
+              return null
+            }
+            return {
+              id: language.id,
+              isPrimary: preference.is_primary_language,
+            }
+          })
+          .filter((item): item is { id: string; isPrimary: boolean } => item !== null)
+
+        const primaryConfiguredLanguage = configuredLanguageOptions.find((item) => item.isPrimary)
         const initialTargetLanguageId =
-          languageData.find((language) => language.language_name === profileData.primary_language)?.id
-          ?? languageData.find((language) => language.id === languagePrefData.find((preference) => preference.is_primary_language)?.language_id)?.id
+          primaryConfiguredLanguage?.id
+          ?? languageData.find((language) => language.language_name === profileData.primary_language)?.id
+          ?? configuredLanguageOptions[0]?.id
           ?? languageData[0]?.id
           ?? ''
         setTargetLanguageId((current) => current || initialTargetLanguageId)
@@ -344,9 +359,52 @@ export default function CorpusWeaveDashboard() {
     languages.find((language) => language.id === primaryLanguagePreference?.language_id)
     ?? languages.find((language) => language.language_name === userLanguage)
     ?? null
+  const contributorLanguageOptions = useMemo(
+    () => {
+      const options = languagePreferences
+        .map((preference) => {
+          const language = languages.find((item) => item.id === preference.language_id)
+          if (!language) {
+            return null
+          }
+          return {
+            ...language,
+            isPrimary: preference.is_primary_language,
+          }
+        })
+        .filter((item): item is Language & { isPrimary: boolean } => item !== null)
+
+      if (options.length > 0) {
+        return options
+      }
+      return languages.map((language) => ({ ...language, isPrimary: false }))
+    },
+    [languagePreferences, languages],
+  )
+  const contributorLanguageIds = useMemo(
+    () => new Set(contributorLanguageOptions.map((language) => language.id)),
+    [contributorLanguageOptions],
+  )
+
+  useEffect(() => {
+    if (!contributorLanguageOptions.length) {
+      return
+    }
+    if (!targetLanguageId || !contributorLanguageIds.has(targetLanguageId)) {
+      const fallbackLanguageId =
+        contributorLanguageOptions.find((language) => language.isPrimary)?.id
+        ?? contributorLanguageOptions[0]?.id
+        ?? ''
+      if (fallbackLanguageId) {
+        setTargetLanguageId(fallbackLanguageId)
+      }
+    }
+  }, [contributorLanguageIds, contributorLanguageOptions, targetLanguageId])
+
   const selectedTargetLanguage =
-    languages.find((language) => language.id === targetLanguageId)
+    contributorLanguageOptions.find((language) => language.id === targetLanguageId)
     ?? primaryLanguageInfo
+    ?? contributorLanguageOptions[0]
     ?? languages[0]
     ?? null
   const selectedTargetLanguageCode = (selectedTargetLanguage?.iso_code ?? primaryLanguageInfo?.iso_code ?? 'ENG').toUpperCase()
@@ -1122,6 +1180,9 @@ export default function CorpusWeaveDashboard() {
                 <div className="mb-4 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
                   You are contributing in <strong>{selectedTargetLanguage?.language_name ?? userLanguage}</strong>. The category labels and prompts below follow that language.
                 </div>
+                <div className="mb-4 rounded-xl border border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+                  Primary language drives your default contribution language and leaderboard standing. Secondary languages are available here as additional contribution options.
+                </div>
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
                   {[
                     { key: 'proverb', label: localizedCategoryLabels.proverb },
@@ -1184,9 +1245,9 @@ export default function CorpusWeaveDashboard() {
                         <SelectValue placeholder="Select a target language" />
                       </SelectTrigger>
                       <SelectContent>
-                        {languages.map((language) => (
+                        {contributorLanguageOptions.map((language) => (
                           <SelectItem key={language.id} value={language.id}>
-                            {language.language_name}
+                            {language.language_name}{language.isPrimary ? ' (Primary)' : ' (Secondary)'}
                           </SelectItem>
                         ))}
                       </SelectContent>

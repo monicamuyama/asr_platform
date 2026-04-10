@@ -16,11 +16,14 @@ import { User, Lock, Bell, DollarSign, Shield, LogOut, ArrowLeft } from 'lucide-
 import {
   getLanguages,
   getUserById,
+  getUserLanguagePreferencesById,
   getUserProfileById,
   getUserWalletById,
   updateUserById,
+  updateUserLanguagePreferencesById,
   updateUserProfileById,
   type Language,
+  type UserLanguagePreferenceResponse,
   type UserProfileResponse,
   type UserResponse,
   type WalletResponse,
@@ -38,6 +41,7 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<UserProfileResponse | null>(null)
   const [wallet, setWallet] = useState<WalletResponse | null>(null)
   const [languages, setLanguages] = useState<Language[]>([])
+  const [languagePreferences, setLanguagePreferences] = useState<UserLanguagePreferenceResponse[]>([])
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -48,6 +52,7 @@ export default function SettingsPage() {
     hasSpeechImpairment: false,
     impairmentType: '',
   })
+  const [secondaryLanguageIds, setSecondaryLanguageIds] = useState<string[]>([])
 
   useEffect(() => {
     const userId = getSessionUserId()
@@ -61,26 +66,39 @@ export default function SettingsPage() {
       setError('')
       setSaveMessage('')
       try {
-        const [userData, profileData, walletData, languageData] = await Promise.all([
+        const [userData, profileData, walletData, languageData, languagePreferenceData] = await Promise.all([
           getUserById(userId),
           getUserProfileById(userId),
           getUserWalletById(userId),
           getLanguages(),
+          getUserLanguagePreferencesById(userId),
         ])
         setUser(userData)
         setProfile(profileData)
         setWallet(walletData)
         setLanguages(languageData)
+        setLanguagePreferences(languagePreferenceData)
+
+        const primaryLanguagePreference = languagePreferenceData.find((pref) => pref.is_primary_language) ?? languagePreferenceData[0]
+        const primaryLanguageFromPreference = languageData.find((language) => language.id === primaryLanguagePreference?.language_id)
+        const primaryLanguageFromProfile = languageData.find((language) => language.language_name === (profileData.primary_language ?? ''))
+        const resolvedPrimaryLanguageId = primaryLanguageFromPreference?.id ?? primaryLanguageFromProfile?.id ?? ''
+
+        const resolvedSecondaryLanguageIds = languagePreferenceData
+          .filter((pref) => !pref.is_primary_language)
+          .map((pref) => pref.language_id)
+
         setFormData({
           fullName: userData.full_name,
           email: userData.email,
-          primaryLanguage: profileData.primary_language ?? '',
+          primaryLanguage: resolvedPrimaryLanguageId,
           bio: profileData.bio ?? '',
           country: profileData.country ?? '',
           preferredContributionType: profileData.preferred_contribution_type ?? 'recording',
           hasSpeechImpairment: profileData.has_speech_impairment,
           impairmentType: profileData.impairment_type ?? '',
         })
+        setSecondaryLanguageIds(resolvedSecondaryLanguageIds)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to load account settings from backend.')
       } finally {
@@ -117,6 +135,10 @@ export default function SettingsPage() {
       setError('Email is required.')
       return
     }
+    if (!formData.primaryLanguage) {
+      setError('Primary Indigenous Language is required.')
+      return
+    }
     if (formData.hasSpeechImpairment && !formData.impairmentType.trim()) {
       setError('Impairment type is required when speech impairment is enabled.')
       return
@@ -124,14 +146,39 @@ export default function SettingsPage() {
 
     setIsSaving(true)
     try {
-      const [updatedUser, updatedProfile] = await Promise.all([
+      const selectedPrimaryLanguage = languages.find((language) => language.id === formData.primaryLanguage)
+      if (!selectedPrimaryLanguage) {
+        throw new Error('Primary language selection is invalid. Please choose a valid language.')
+      }
+
+      const uniqueSecondaryLanguageIds = Array.from(new Set(secondaryLanguageIds.filter((id) => id !== formData.primaryLanguage)))
+      const updatedLanguagePreferencesPayload = [
+        {
+          language_id: formData.primaryLanguage,
+          is_primary_language: true,
+          can_record: true,
+          can_transcribe: true,
+          can_validate: true,
+          proficiency_level: 'native' as const,
+        },
+        ...uniqueSecondaryLanguageIds.map((languageId) => ({
+          language_id: languageId,
+          is_primary_language: false,
+          can_record: true,
+          can_transcribe: true,
+          can_validate: true,
+          proficiency_level: 'fluent' as const,
+        })),
+      ]
+
+      const [updatedUser, updatedProfile, updatedLanguagePreferences] = await Promise.all([
         updateUserById(userId, {
           full_name: formData.fullName.trim(),
           email: formData.email.trim(),
         }),
         updateUserProfileById(userId, {
           country: formData.country.trim() || '',
-          primary_language: formData.primaryLanguage,
+          primary_language: selectedPrimaryLanguage.language_name,
           preferred_contribution_type: formData.preferredContributionType as
             | 'recording'
             | 'validation'
@@ -142,10 +189,12 @@ export default function SettingsPage() {
             : null,
           bio: formData.bio.trim() || null,
         }),
+        updateUserLanguagePreferencesById(userId, updatedLanguagePreferencesPayload),
       ])
 
       setUser(updatedUser)
       setProfile(updatedProfile)
+      setLanguagePreferences(updatedLanguagePreferences)
       setSaveMessage('Profile saved successfully.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save profile.')
@@ -161,6 +210,18 @@ export default function SettingsPage() {
 
   if (isLoading) {
     return <div className="min-h-screen bg-background" />
+  }
+
+  const indigenousLanguages = languages.filter((language) => language.is_low_resource)
+  const secondaryLanguageChoices = languages.filter((language) => language.id !== formData.primaryLanguage)
+
+  const toggleSecondaryLanguage = (languageId: string, enabled: boolean) => {
+    setSecondaryLanguageIds((current) => {
+      if (enabled) {
+        return current.includes(languageId) ? current : [...current, languageId]
+      }
+      return current.filter((id) => id !== languageId)
+    })
   }
 
   return (
@@ -265,23 +326,45 @@ export default function SettingsPage() {
 
                 {/* Languages */}
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Languages You Speak</Label>
+                  <Label className="text-sm font-medium">Primary Indigenous Language</Label>
                   <Select
                     value={formData.primaryLanguage}
                     onValueChange={(value) => setFormData((prev) => ({ ...prev, primaryLanguage: value }))}
                   >
                     <SelectTrigger className="border-border">
-                      <SelectValue placeholder="Select a language" />
+                      <SelectValue placeholder="Select your primary indigenous language" />
                     </SelectTrigger>
                     <SelectContent>
-                      {languages.map((language) => (
-                        <SelectItem key={language.id} value={language.language_name}>
+                      {indigenousLanguages.map((language) => (
+                        <SelectItem key={language.id} value={language.id}>
                           {language.language_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">You can contribute in all selected languages</p>
+                  <p className="text-xs text-muted-foreground">This is your default contribution language and leaderboard language.</p>
+                </div>
+
+                <div className="space-y-3 rounded-lg border border-border p-4">
+                  <Label className="text-sm font-medium">Secondary Languages</Label>
+                  <p className="text-xs text-muted-foreground">Add other languages you can contribute in. English and Swahili belong here as additional languages.</p>
+                  <div className="space-y-3">
+                    {secondaryLanguageChoices.map((language) => (
+                      <div key={language.id} className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{language.language_name}</p>
+                          <p className="text-xs text-muted-foreground">{language.is_low_resource ? 'Indigenous language' : 'Additional language'}</p>
+                        </div>
+                        <Switch
+                          checked={secondaryLanguageIds.includes(language.id)}
+                          onCheckedChange={(checked) => toggleSecondaryLanguage(language.id, checked)}
+                        />
+                      </div>
+                    ))}
+                    {secondaryLanguageChoices.length === 0 && (
+                      <p className="text-xs text-muted-foreground">Select a primary language first to configure secondary languages.</p>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
@@ -470,8 +553,8 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-foreground mb-2">Bank Account Details</p>
                   <div className="space-y-3 text-sm">
                     <div>
-                      <p className="text-muted-foreground">Wallet Balance</p>
-                      <p className="font-medium text-foreground">{wallet ? `${wallet.balance.toFixed(2)} ${wallet.currency}` : '0.00 USD'}</p>
+                      <p className="text-muted-foreground">Points Balance</p>
+                      <p className="font-medium text-foreground">{wallet ? `${wallet.balance.toFixed(2)} ${wallet.currency}` : '0.00 PTS'}</p>
                     </div>
                   </div>
                 </div>

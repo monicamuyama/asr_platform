@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from isdr_api.database import get_db
 from isdr_api.db_models import CommunityRating, GovernanceParam, Submission
-from isdr_api.db_models_extended import Language, Recording, Wallet
+from isdr_api.db_models_extended import Recording, Wallet
+from isdr_api.language_matching import (
+    recording_reward_for_preference,
+    require_declared_language_preference,
+    require_language_capability,
+)
 from isdr_api.schemas import (
     QueueItemSchema,
     RatingCreate,
@@ -23,7 +28,6 @@ from isdr_core.routing import route_submission
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 
-REWARD_PER_RECORDING = 10.0
 REWARD_PER_VALIDATION = 3.0
 
 
@@ -33,10 +37,10 @@ def _normalize_sentence(value: str | None) -> str:
     return " ".join(value.split()).strip().lower()
 
 
-def _credit_wallet(db: Session, user_id: str, amount: float) -> None:
+def _credit_points(db: Session, user_id: str, amount: float) -> None:
     wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
     if wallet is None:
-        wallet = Wallet(user_id=user_id, balance=0.0, currency="USD")
+        wallet = Wallet(user_id=user_id, balance=0.0, currency="PTS")
         db.add(wallet)
         db.flush()
 
@@ -179,21 +183,14 @@ def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) 
     db.add(submission)
     db.flush()
 
+    recording_reward = 0.0
     if payload.audio_url:
-        normalized_language_code = submission.language_code.upper()
-        language = (
-            db.query(Language)
-            .filter(Language.iso_code == normalized_language_code)
-            .first()
+        language, preference = require_declared_language_preference(
+            db,
+            payload.contributor_id,
+            payload.language_code,
         )
-        if language is None:
-            language = Language(
-                language_name=normalized_language_code,
-                iso_code=normalized_language_code,
-                is_low_resource=True,
-            )
-            db.add(language)
-            db.flush()
+        recording_reward = recording_reward_for_preference(preference)
 
         recording = Recording(
             user_id=submission.contributor_id,
@@ -221,7 +218,8 @@ def create_submission(payload: SubmissionCreate, db: Session = Depends(get_db)) 
         if challenge_submission:
             challenge_submission.reveal_submission_id = submission.id
 
-    _credit_wallet(db, payload.contributor_id, REWARD_PER_RECORDING)
+    if recording_reward > 0:
+        _credit_points(db, payload.contributor_id, recording_reward)
     db.commit()
     db.refresh(submission)
     return submission
@@ -275,6 +273,8 @@ def create_community_rating(submission_id: str, payload: RatingCreate, db: Sessi
     if submission.contributor_id == payload.rater_id:
         raise HTTPException(status_code=400, detail="Contributors cannot rate their own submission")
 
+    require_language_capability(db, payload.rater_id, submission.language_code, "validate")
+
     existing_rating = (
         db.query(CommunityRating)
         .filter(
@@ -302,7 +302,7 @@ def create_community_rating(submission_id: str, payload: RatingCreate, db: Sessi
         created_at=datetime.now(timezone.utc),
     )
     db.add(rating)
-    _credit_wallet(db, payload.rater_id, REWARD_PER_VALIDATION)
+    _credit_points(db, payload.rater_id, REWARD_PER_VALIDATION)
     db.flush()
 
     result = _route_submission(submission_id, db)

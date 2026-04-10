@@ -18,6 +18,8 @@ from isdr_api.db_models_extended import (
     User,
     UserLanguagePreference,
 )
+from isdr_api.language_matching import require_language_capability
+from isdr_api.language_matching import list_language_matched_validator_ids
 from isdr_api.schemas_extended import (
     GraduateTranscriptionRequest,
     PromptBankEntrySchema,
@@ -63,21 +65,7 @@ def _ensure_user_language_capability(
     language_id: str,
     capability: str,
 ) -> None:
-    preference = (
-        db.query(UserLanguagePreference)
-        .filter(
-            UserLanguagePreference.user_id == user_id,
-            UserLanguagePreference.language_id == language_id,
-        )
-        .first()
-    )
-    if preference is None:
-        raise HTTPException(status_code=403, detail="No language preference configured for this task")
-
-    if capability == "transcribe" and not preference.can_transcribe:
-        raise HTTPException(status_code=403, detail="User is not permitted to transcribe this language")
-    if capability == "validate" and not preference.can_validate:
-        raise HTTPException(status_code=403, detail="User is not permitted to peer review this language")
+    require_language_capability(db, user_id, language_id, capability)
 
 
 @router.get("/queue", response_model=list[TranscriptionQueueItemSchema])
@@ -106,6 +94,7 @@ def list_transcription_queue(db: Session = Depends(get_db)) -> list[dict[str, ob
             )
 
         prompt_text = recording.sentence.sentence_text if recording.sentence else None
+        eligible_validator_ids = list_language_matched_validator_ids(db, recording.language_id)
         queue_items.append(
             {
                 "id": recording.id,
@@ -117,6 +106,8 @@ def list_transcription_queue(db: Session = Depends(get_db)) -> list[dict[str, ob
                 "speaker_type": recording.speaker_type,
                 "transcript_count": int(transcript_count or 0),
                 "validation_count": int(validation_count or 0),
+                "eligible_validator_ids": eligible_validator_ids,
+                "eligible_validator_count": len(eligible_validator_ids),
                 "latest_transcription": latest_task.transcribed_text if latest_task else None,
                 "latest_confidence_score": latest_task.confidence_score if latest_task else None,
                 "prompt_text": prompt_text,

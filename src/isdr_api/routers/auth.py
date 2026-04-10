@@ -43,6 +43,7 @@ from isdr_api.schemas_extended import (
     SpeechConditionSchema,
     UserDemographicsSchema,
     UserLanguagePreferenceSchema,
+    UserLanguagePreferencesUpdateRequest,
     UserProfileUpdateRequest,
     UserProfileSchema,
     UserSchema,
@@ -179,6 +180,17 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
             status_code=400, detail="Must select at least one language to contribute"
         )
 
+    primary_language_count = sum(1 for pref in payload.language_preferences if pref.is_primary_language)
+    if primary_language_count != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Exactly one primary language must be selected",
+        )
+
+    language_ids = [pref.language_id for pref in payload.language_preferences]
+    if len(language_ids) != len(set(language_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate language preferences are not allowed")
+
     # Validate all required consents are signed
     required_consent_count = (
         db.query(ConsentDocument)
@@ -306,6 +318,7 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
 
     speaker_ids_created = []
     language_prefs_created = []
+    primary_language_name: str | None = None
 
     for lang_pref in payload.language_preferences:
         # Get language to extract language code
@@ -316,6 +329,9 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
         )
         if not language:
             raise HTTPException(status_code=400, detail="Invalid language selected")
+
+        if lang_pref.is_primary_language:
+            primary_language_name = language.language_name
 
         # Get country code from native_language country or primary region
         country_code = "UG"  # Default to Uganda for MVP
@@ -372,6 +388,9 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
         db.flush()
         language_prefs_created.append(lang_pref_obj)
 
+    if primary_language_name:
+        profile.primary_language = primary_language_name
+
     # ========================================================================
     # Step 8: Create wallet
     # ========================================================================
@@ -380,7 +399,7 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
         id=str(uuid.uuid4()),
         user_id=user_id,
         balance=0.0,
-        currency="USD",
+        currency="PTS",
         last_updated=datetime.now(timezone.utc),
         created_at=datetime.now(timezone.utc),
     )
@@ -541,6 +560,81 @@ def get_user_language_preferences(user_id: str, db: Session = Depends(get_db)) -
         .filter(UserLanguagePreference.user_id == user_id)
         .all()
     )
+
+
+@router.put("/users/{user_id}/language-preferences", response_model=list[UserLanguagePreferenceSchema])
+def replace_user_language_preferences(
+    user_id: str,
+    payload: UserLanguagePreferencesUpdateRequest,
+    db: Session = Depends(get_db),
+) -> list[UserLanguagePreference]:
+    """Replace a user's primary and secondary language preferences."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not payload.language_preferences:
+        raise HTTPException(status_code=400, detail="At least one language preference is required")
+
+    primary_language_count = sum(1 for pref in payload.language_preferences if pref.is_primary_language)
+    if primary_language_count != 1:
+        raise HTTPException(status_code=400, detail="Exactly one primary language must be selected")
+
+    language_ids = [pref.language_id for pref in payload.language_preferences]
+    if len(language_ids) != len(set(language_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate language preferences are not allowed")
+
+    languages = db.query(Language).filter(Language.id.in_(language_ids)).all()
+    language_map = {language.id: language for language in languages}
+    missing_language_ids = [language_id for language_id in language_ids if language_id not in language_map]
+    if missing_language_ids:
+        raise HTTPException(status_code=400, detail="One or more selected languages are invalid")
+
+    db.query(UserLanguagePreference).filter(UserLanguagePreference.user_id == user_id).delete()
+
+    created_preferences: list[UserLanguagePreference] = []
+    primary_language_name: str | None = None
+    for pref in payload.language_preferences:
+        if pref.is_primary_language:
+            primary_language_name = language_map[pref.language_id].language_name
+
+        created_pref = UserLanguagePreference(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            language_id=pref.language_id,
+            dialect_id=pref.dialect_id,
+            is_primary_language=pref.is_primary_language,
+            can_record=pref.can_record,
+            can_transcribe=pref.can_transcribe,
+            can_validate=pref.can_validate,
+            proficiency_level=pref.proficiency_level,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(created_pref)
+        created_preferences.append(created_pref)
+
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+    if profile is None:
+        profile = UserProfile(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            primary_language=primary_language_name,
+            preferred_contribution_type="recording",
+            has_speech_impairment=False,
+            can_read_sentences=True,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(profile)
+    else:
+        profile.primary_language = primary_language_name
+        profile.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    for preference in created_preferences:
+        db.refresh(preference)
+
+    return created_preferences
 
 
 @router.get("/users/{user_id}/speech-conditions", response_model=list[UserSpeechConditionSchema])

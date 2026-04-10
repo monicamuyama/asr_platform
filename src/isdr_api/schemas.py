@@ -163,6 +163,8 @@ class QueueItemSchema(BaseModel):
     audio_url: Optional[str] = None
     status: str
     ratings_count: int
+    eligible_validator_ids: list[str] = Field(default_factory=list)
+    eligible_validator_count: int = 0
 
 
 class RatingResultSchema(BaseModel):

@@ -202,6 +202,18 @@ class UserLanguagePreferenceRequest(BaseModel):
     can_validate: bool = False
     proficiency_level: Literal["native", "fluent", "intermediate", "beginner"] = "native"
 
+    @model_validator(mode="after")
+    def validate_proficiency_level(self) -> "UserLanguagePreferenceRequest":
+        if self.is_primary_language and self.proficiency_level != "native":
+            raise ValueError("Primary languages must be marked as native")
+        if not self.is_primary_language and self.proficiency_level == "native":
+            raise ValueError("Secondary languages require a self-rated fluency level")
+        return self
+
+
+class UserLanguagePreferencesUpdateRequest(BaseModel):
+    language_preferences: list[UserLanguagePreferenceRequest]
+
 
 class UserLanguagePreferenceSchema(BaseModel):
     id: str
@@ -413,6 +425,8 @@ class TranscriptionQueueItemSchema(BaseModel):
     speaker_type: str
     transcript_count: int
     validation_count: int
+    eligible_validator_ids: list[str] = Field(default_factory=list)
+    eligible_validator_count: int = 0
     latest_transcription: Optional[str] = None
     latest_confidence_score: Optional[float] = None
     prompt_text: Optional[str] = None
@@ -529,3 +543,11 @@ class AdminLanguageCapabilityUpdateRequest(BaseModel):
     can_transcribe: Optional[bool] = None
     can_validate: Optional[bool] = None
     proficiency_level: Optional[Literal["native", "fluent", "intermediate", "beginner"]] = None
+
+    @model_validator(mode="after")
+    def validate_proficiency_level(self) -> "AdminLanguageCapabilityUpdateRequest":
+        if self.is_primary_language is True and self.proficiency_level not in (None, "native"):
+            raise ValueError("Primary languages must be marked as native")
+        if self.is_primary_language is False and self.proficiency_level in (None, "native"):
+            raise ValueError("Secondary languages require a self-rated fluency level")
+        return self
