@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { Mail, Lock, ArrowLeft } from 'lucide-react'
 import { API_BASE } from '@/lib/api'
-import { setSessionUserId } from '@/lib/auth'
+import { setSessionUserId, setSessionToken } from '@/lib/auth'
 
 export default function SignInPage() {
   const router = useRouter()
@@ -38,9 +38,20 @@ export default function SignInPage() {
         throw new Error(payload.detail ?? 'Sign in failed')
       }
 
-      const user = (await response.json()) as { id: string; onboarding_completed: boolean }
-      setSessionUserId(user.id)
-      if (user.onboarding_completed) {
+      const user = (await response.json()) as { 
+        user?: { id: string; onboarding_completed: boolean }
+        token?: { access_token: string; token_type: string; expires_at: string }
+      }
+      
+      if (user.user?.id) {
+        setSessionUserId(user.user.id)
+      }
+      
+      if (user.token?.access_token) {
+        setSessionToken(user.token.access_token, user.token.token_type, user.token.expires_at)
+      }
+      
+      if (user.user?.onboarding_completed) {
         router.push('/dashboard')
       } else {
         router.push('/onboarding')

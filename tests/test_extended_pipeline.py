@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import tempfile
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from isdr_api.database import Base, get_db
+from isdr_api.db_models import Submission, ContributorTranslation, Base as LegacyBase
 from isdr_api.db_models_extended import (
     ConsentDocument,
     Country,
@@ -20,6 +22,7 @@ from isdr_api.db_models_extended import (
     DatasetSpeakerId,
     Language,
     Recording,
+    SourceTranslationTask,
     SpeechCondition,
     TranscriptionTask,
     TranscriptionValidation,
@@ -28,6 +31,7 @@ from isdr_api.db_models_extended import (
     UserLanguagePreference,
 )
 from isdr_api.main import app
+from isdr_api.source_ingestion import import_source_corpora
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 test_engine = create_engine(
@@ -53,8 +57,17 @@ TEST_PASSWORD = "testpass123"
 
 @pytest.fixture(autouse=True)
 def fresh_db():
+    # Drop all tables first to ensure clean state
+    LegacyBase.metadata.drop_all(bind=test_engine)
+    Base.metadata.drop_all(bind=test_engine)
+  
+    # Create all tables fresh
+    LegacyBase.metadata.create_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
     yield
+    
+    # Clean up after test
+    LegacyBase.metadata.drop_all(bind=test_engine)
     Base.metadata.drop_all(bind=test_engine)
 
 
@@ -63,6 +76,8 @@ def _seed_reference_data() -> tuple[str, str, str, str]:
     try:
         country = Country(country_name="Uganda", iso_code="UG", region="Africa")
         language = Language(language_name="Luganda", iso_code="LG", country=country, is_low_resource=True)
+        english = Language(language_name="English", iso_code="ENG", country=country, is_low_resource=False)
+        acholi = Language(language_name="Acholi", iso_code="ACH", country=country, is_low_resource=True)
         speech_condition = SpeechCondition(
             condition_name="stutter",
             description="Speech with repetitions, prolongations, or blocks.",
@@ -82,10 +97,12 @@ def _seed_reference_data() -> tuple[str, str, str, str]:
             document_url="/research",
             is_active=True,
         )
-        db.add_all([country, language, speech_condition, privacy, research])
+        db.add_all([country, language, english, acholi, speech_condition, privacy, research])
         db.commit()
         db.refresh(country)
         db.refresh(language)
+        db.refresh(english)
+        db.refresh(acholi)
         db.refresh(speech_condition)
         db.refresh(privacy)
         db.refresh(research)
@@ -329,3 +346,295 @@ def test_transcription_write_requires_authentication():
         },
     )
     assert response.status_code == 401
+
+
+def test_source_ingestion_bootstraps_multilingual_translation_tasks():
+    language_id, _, _, _ = _seed_reference_data()
+    _create_user_with_preferences("translator_lg", language_id, can_record=False, can_transcribe=True, can_validate=False)
+    _create_user_with_preferences("expert02", language_id, can_record=False, can_transcribe=False, can_validate=False, role="expert")
+
+    db = TestingSessionLocal()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        tsv_path = Path(temp_dir) / "English-Luganda.tsv"
+        csv_path = Path(temp_dir) / "Luganda Monolingual Corpus.csv"
+
+        tsv_path.write_text("Hello\tOli otya\n", encoding="utf-8")
+        csv_path.write_text("Tukusanyukidde\n", encoding="utf-8")
+
+        stats = import_source_corpora(
+            db=db,
+            english_luganda_tsv=tsv_path,
+            luganda_monolingual_csv=csv_path,
+            dry_run=False,
+        )
+
+    assert stats.english_sentences_created == 1
+    assert stats.source_pairs_created == 1
+    assert stats.source_translation_tasks_created == 2
+
+    luganda = db.query(Language).filter(Language.iso_code == "LG").first()
+    assert luganda is not None
+    source_tasks = db.query(SourceTranslationTask).all()
+    assert len(source_tasks) == 2
+
+    queue_response = client.get(
+        f"/transcription/source-translation-queue?target_language_id={luganda.id}&status=prefilled"
+    )
+    assert queue_response.status_code == 200
+    queue_items = queue_response.json()
+    assert len(queue_items) == 1
+    task_id = queue_items[0]["id"]
+    assert queue_items[0]["machine_prefill_text"] == "Oli otya"
+
+    submit_response = client.post(
+        f"/transcription/source-translations/{task_id}/submit",
+        json={
+            "translator_id": "translator_lg",
+            "translated_text": "Oli otya?",
+        },
+        headers=_auth_headers("translator_lg@example.com"),
+    )
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == "submitted"
+
+    review_response = client.post(
+        f"/transcription/source-translations/{task_id}/review",
+        json={
+            "reviewer_id": "expert02",
+            "approved": True,
+            "reviewed_text": "Oli otya?",
+            "notes": "Approved for prompt bank",
+        },
+        headers=_auth_headers("expert02@example.com"),
+    )
+    assert review_response.status_code == 200
+    assert review_response.json()["status"] == "approved"
+
+    db.close()
+
+
+# ============================================================================
+# CONTRIBUTOR SUBMISSION WITH TRANSCRIPTION & TRANSLATION WORKFLOW
+# ============================================================================
+
+
+def test_contributor_submission_with_transcription_and_translation():
+    """Test complete contributor submission flow with transcription and translation."""
+    db = TestingSessionLocal()
+
+    # Create submission with recording, transcription, and translation
+    submission_response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "contributor_01",
+            "language_code": "lg",
+            "native_language_code": "lg",
+            "target_language_code": "lg",
+            "mode": "recording",
+            "category": "proverb",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "audio_url": "data:audio/webm;base64,AAAA",
+            "contributor_transcription": "Omutima gwa mutwe",
+            "translations": [
+                {
+                    "source_language_code": "lg",
+                    "target_language_code": "eng",
+                    "source_text": "Omutima gwa mutwe",
+                    "translated_text": "The heart beats in the head",
+                }
+            ],
+        },
+    )
+    assert submission_response.status_code == 200
+    submission = submission_response.json()
+    assert submission["status"] == "PENDING_COMMUNITY"
+    assert submission["contributor_transcription"] == "Omutima gwa mutwe"
+    submission_id = submission["id"]
+
+    # Verify submission was created with transcription
+    db_submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    assert db_submission is not None
+    assert db_submission.contributor_transcription == "Omutima gwa mutwe"
+
+    db.close()
+
+
+def test_contributor_submission_requires_recording():
+    """Test that submission requires audio_url."""
+    response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "contributor_02",
+            "language_code": "lg",
+            "native_language_code": "lg",
+            "target_language_code": "lg",
+            "mode": "recording",
+            "category": "proverb",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "contributor_transcription": "Some text",
+        },
+    )
+    assert response.status_code == 400
+    assert "audio_url" in response.json()["detail"]
+
+
+def test_contributor_submission_requires_transcription_or_translation():
+    """Test that submission requires transcription or translation."""
+    response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "contributor_03",
+            "language_code": "lg",
+            "native_language_code": "lg",
+            "target_language_code": "lg",
+            "mode": "recording",
+            "category": "proverb",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "audio_url": "data:audio/webm;base64,AAAA",
+        },
+    )
+    assert response.status_code == 400
+    assert "Transcription or at least one translation is required" in response.json()["detail"]
+
+
+def test_add_translation_to_submission_after_creation():
+    """Test adding translation to submission after initial creation."""
+    db = TestingSessionLocal()
+
+    # Create initial submission with just transcription
+    submission_response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "contributor_04",
+            "language_code": "lg",
+            "native_language_code": "lg",
+            "target_language_code": "lg",
+            "mode": "recording",
+            "category": "proverb",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "audio_url": "data:audio/webm;base64,AAAA",
+            "contributor_transcription": "Kabaka akabala",
+        },
+    )
+    assert submission_response.status_code == 200
+    submission_id = submission_response.json()["id"]
+
+    # Add translation after creation
+    translation_response = client.post(
+        f"/submissions/{submission_id}/translations",
+        json={
+            "source_language_code": "lg",
+            "target_language_code": "eng",
+            "source_text": "Kabaka akabala",
+            "translated_text": "The king breaks",
+        },
+    )
+    assert translation_response.status_code == 200
+    translation = translation_response.json()
+    assert translation["status"] == "submitted"
+    assert translation["source_text"] == "Kabaka akabala"
+    assert translation["translated_text"] == "The king breaks"
+
+    # Verify translation was created in database
+    db_translation = db.query(ContributorTranslation).filter(
+        ContributorTranslation.submission_id == submission_id
+    ).first()
+    assert db_translation is not None
+    assert db_translation.translator_id == "contributor_04"
+
+    db.close()
+
+
+def test_list_submission_translations():
+    """Test retrieving all translations for a submission."""
+    # Create submission with translations
+    submission_response = client.post(
+        "/submissions",
+        json={
+            "contributor_id": "contributor_05",
+            "language_code": "lg",
+            "native_language_code": "lg",
+            "target_language_code": "lg",
+            "mode": "recording",
+            "category": "proverb",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "audio_url": "data:audio/webm;base64,AAAA",
+            "contributor_transcription": "Abalala bakola",
+            "translations": [
+                {
+                    "source_language_code": "lg",
+                    "target_language_code": "eng",
+                    "source_text": "Abalala bakola",
+                    "translated_text": "Fools work",
+                }
+            ],
+        },
+    )
+    submission_id = submission_response.json()["id"]
+
+    # Add another translation
+    client.post(
+        f"/submissions/{submission_id}/translations",
+        json={
+            "source_language_code": "lg",
+            "target_language_code": "swa",
+            "source_text": "Abalala bakola",
+            "translated_text": "Wazimu wanafanya kazi",
+        },
+    )
+
+    # List all translations
+    list_response = client.get(f"/submissions/{submission_id}/translations")
+    assert list_response.status_code == 200
+    translations = list_response.json()
+    assert len(translations) == 2
+    targets = {t["target_language_code"] for t in translations}
+    assert targets == {"ENG", "SWA"}
+
+
+def test_list_submissions_by_contributor():
+    """Test filtering submissions by contributor."""
+    # Create submissions for different contributors
+    client.post(
+        "/submissions",
+        json={
+            "contributor_id": "contributor_a",
+            "language_code": "lg",
+            "native_language_code": "lg",
+            "target_language_code": "lg",
+            "mode": "recording",
+            "category": "proverb",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "audio_url": "data:audio/webm;base64,AAAA",
+            "contributor_transcription": "Text A",
+        },
+    )
+
+    client.post(
+        "/submissions",
+        json={
+            "contributor_id": "contributor_b",
+            "language_code": "lg",
+            "native_language_code": "lg",
+            "target_language_code": "lg",
+            "mode": "recording",
+            "category": "proverb",
+            "speaker_profile": "healthy",
+            "consent_version": "v1.0",
+            "audio_url": "data:audio/webm;base64,BBBB",
+            "contributor_transcription": "Text B",
+        },
+    )
+
+    # List submissions for contributor_a
+    response = client.get("/submissions?contributor_id=contributor_a")
+    assert response.status_code == 200
+    submissions = response.json()
+    assert len(submissions) == 1
+    assert submissions[0]["contributor_id"] == "contributor_a"

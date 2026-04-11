@@ -268,7 +268,7 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
         preferred_contribution_type=payload.preferred_contribution_type,
         has_speech_impairment=payload.has_speech_impairment,
         impairment_type=payload.impairment_type,
-        can_read_sentences=not payload.has_speech_impairment,
+        can_read_sentences=payload.can_read_sentences,
         bio=payload.bio,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -417,6 +417,9 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
     db.refresh(profile)
     db.refresh(demographics)
 
+    # Create access token for the newly registered user
+    token_payload = create_access_token(user)
+
     return {
         "user": UserSchema.model_validate(user),
         "profile": UserProfileSchema.model_validate(profile),
@@ -425,6 +428,7 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
         "language_preferences": [
             UserLanguagePreferenceSchema.model_validate(lp) for lp in language_prefs_created
         ],
+        "token": AccessTokenSchema.model_validate(token_payload),
         "message": "Signup successful! Welcome to ISDR.",
     }
 

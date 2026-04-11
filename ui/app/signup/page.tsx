@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import Link from 'next/link'
 import { Mail, Lock, User, ArrowLeft, CheckCircle } from 'lucide-react'
 import { API_BASE, type ConsentDocument, type Country, type District, type Language, type SpeechCondition } from '@/lib/api'
-import { setSessionUserId } from '@/lib/auth'
+import { setSessionUserId, setSessionToken } from '@/lib/auth'
 
 const SIGNUP_DRAFT_KEY = 'corpusweave_signup_draft'
 
@@ -24,6 +24,14 @@ type SignupDraft = {
     countryId: string
     districtId: string
     tribeEthnicity: string
+    gender: 'female' | 'male' | 'non_binary' | 'prefer_not_to_say' | ''
+    ageRange: 'under_18' | '18_24' | '25_34' | '35_44' | '45_54' | '55_plus' | ''
+    educationLevel: 'primary' | 'secondary' | 'university' | 'other' | 'prefer_not_to_say' | ''
+    languageProficiency: 'native' | 'fluent' | 'intermediate' | 'beginner'
+    canReadSentences: boolean
+    canRecordSpeech: boolean
+    canTranscribeText: boolean
+    canValidateSubmissions: boolean
     hasSpeechImpairment: boolean
     speechConditionId: string
     speechConditionSeverity: 'mild' | 'moderate' | 'severe'
@@ -41,6 +49,14 @@ const DEFAULT_FORM_DATA: SignupDraft['formData'] = {
   countryId: '',
   districtId: '',
   tribeEthnicity: '',
+  gender: '',
+  ageRange: '',
+  educationLevel: '',
+  languageProficiency: 'native',
+  canReadSentences: true,
+  canRecordSpeech: true,
+  canTranscribeText: true,
+  canValidateSubmissions: true,
   hasSpeechImpairment: false,
   speechConditionId: '',
   speechConditionSeverity: 'mild',
@@ -58,15 +74,63 @@ function normalizeSignupDraft(rawDraft: unknown): SignupDraft | null {
   const normalizedStep = Number.isFinite(rawStep) && rawStep >= 1 && rawStep <= 2 ? Math.floor(rawStep) : 1
 
   const rawFormData = (draft.formData && typeof draft.formData === 'object') ? draft.formData : {}
-  const normalizedFormData = {
+  const severity = (rawFormData as Partial<SignupDraft['formData']>).speechConditionSeverity
+  const gender = (rawFormData as Partial<SignupDraft['formData']>).gender
+  const ageRange = (rawFormData as Partial<SignupDraft['formData']>).ageRange
+  const educationLevel = (rawFormData as Partial<SignupDraft['formData']>).educationLevel
+  const languageProficiency = (rawFormData as Partial<SignupDraft['formData']>).languageProficiency
+  const normalizedFormData: SignupDraft['formData'] = {
     ...DEFAULT_FORM_DATA,
     ...rawFormData,
+    gender:
+      gender === 'female' || gender === 'male' || gender === 'non_binary' || gender === 'prefer_not_to_say'
+        ? gender
+        : '',
+    ageRange:
+      ageRange === 'under_18'
+      || ageRange === '18_24'
+      || ageRange === '25_34'
+      || ageRange === '35_44'
+      || ageRange === '45_54'
+      || ageRange === '55_plus'
+        ? ageRange
+        : '',
+    educationLevel:
+      educationLevel === 'primary'
+      || educationLevel === 'secondary'
+      || educationLevel === 'university'
+      || educationLevel === 'other'
+      || educationLevel === 'prefer_not_to_say'
+        ? educationLevel
+        : '',
+    languageProficiency:
+      languageProficiency === 'fluent'
+      || languageProficiency === 'intermediate'
+      || languageProficiency === 'beginner'
+      || languageProficiency === 'native'
+        ? languageProficiency
+        : 'native',
+    canReadSentences:
+      typeof (rawFormData as Partial<SignupDraft['formData']>).canReadSentences === 'boolean'
+        ? Boolean((rawFormData as Partial<SignupDraft['formData']>).canReadSentences)
+        : DEFAULT_FORM_DATA.canReadSentences,
+    canRecordSpeech:
+      typeof (rawFormData as Partial<SignupDraft['formData']>).canRecordSpeech === 'boolean'
+        ? Boolean((rawFormData as Partial<SignupDraft['formData']>).canRecordSpeech)
+        : DEFAULT_FORM_DATA.canRecordSpeech,
+    canTranscribeText:
+      typeof (rawFormData as Partial<SignupDraft['formData']>).canTranscribeText === 'boolean'
+        ? Boolean((rawFormData as Partial<SignupDraft['formData']>).canTranscribeText)
+        : DEFAULT_FORM_DATA.canTranscribeText,
+    canValidateSubmissions:
+      typeof (rawFormData as Partial<SignupDraft['formData']>).canValidateSubmissions === 'boolean'
+        ? Boolean((rawFormData as Partial<SignupDraft['formData']>).canValidateSubmissions)
+        : DEFAULT_FORM_DATA.canValidateSubmissions,
     hasSpeechImpairment: Boolean((rawFormData as Partial<SignupDraft['formData']>).hasSpeechImpairment),
     speechConditionResearchConsent: Boolean((rawFormData as Partial<SignupDraft['formData']>).speechConditionResearchConsent),
     speechConditionSeverity:
-      (rawFormData as Partial<SignupDraft['formData']>).speechConditionSeverity === 'moderate'
-      || (rawFormData as Partial<SignupDraft['formData']>).speechConditionSeverity === 'severe'
-        ? (rawFormData as Partial<SignupDraft['formData']>).speechConditionSeverity
+      severity === 'moderate' || severity === 'severe' || severity === 'mild'
+        ? severity
         : 'mild',
   }
 
@@ -259,6 +323,17 @@ export default function SignUpPage() {
       return
     }
 
+    if (!formData.canRecordSpeech && !formData.canTranscribeText && !formData.canValidateSubmissions) {
+      setError('Please choose at least one contribution capability: spoken, written, or validation.')
+      return
+    }
+
+    const preferredContributionType: 'recording' | 'transcription' | 'validation' = formData.canRecordSpeech
+      ? 'recording'
+      : formData.canTranscribeText
+        ? 'transcription'
+        : 'validation'
+
     setIsLoading(true)
 
     try {
@@ -280,18 +355,19 @@ export default function SignUpPage() {
             })),
           country: selectedCountry.country_name,
           primary_language: selectedLanguage.language_name,
-          preferred_contribution_type: 'recording',
+          preferred_contribution_type: preferredContributionType,
           has_speech_impairment: formData.hasSpeechImpairment,
           impairment_type: formData.hasSpeechImpairment ? selectedSpeechCondition?.condition_name ?? null : null,
           bio: null,
-          age_range: null,
-          gender: null,
+          can_read_sentences: formData.canReadSentences,
+          age_range: formData.ageRange || null,
+          gender: formData.gender || null,
           country_id: selectedCountry.id,
           region_id: null,
           district_id: formData.districtId || null,
           tribe_ethnicity: formData.tribeEthnicity || null,
           native_language_id: selectedLanguage.id,
-          education_level: null,
+          education_level: formData.educationLevel || null,
           speech_conditions:
             formData.hasSpeechImpairment && selectedSpeechCondition
               ? [
@@ -308,10 +384,10 @@ export default function SignUpPage() {
               language_id: selectedLanguage.id,
               dialect_id: null,
               is_primary_language: true,
-              can_record: true,
-              can_transcribe: true,
-              can_validate: true,
-              proficiency_level: 'native',
+              can_record: formData.canRecordSpeech,
+              can_transcribe: formData.canTranscribeText,
+              can_validate: formData.canValidateSubmissions,
+              proficiency_level: formData.languageProficiency,
             },
           ],
         }),
@@ -322,12 +398,20 @@ export default function SignUpPage() {
         throw new Error(payload.detail ?? 'Signup failed')
       }
 
-      const payload = (await response.json()) as { user?: { id?: string } }
+      const payload = (await response.json()) as { 
+        user?: { id?: string }
+        token?: { access_token?: string; token_type?: string; expires_at?: string }
+      }
+      
       if (payload.user?.id) {
         setSessionUserId(payload.user.id)
-        clearSignupDraft()
       }
-
+      
+      if (payload.token?.access_token) {
+        setSessionToken(payload.token.access_token, payload.token.token_type || 'bearer', payload.token.expires_at)
+      }
+      
+      clearSignupDraft()
       setStep(3)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Signup failed')
@@ -459,7 +543,7 @@ export default function SignUpPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="country" className="text-sm font-medium">Country</Label>
+                      <Label htmlFor="country" className="text-sm font-medium">Country of Residence</Label>
                       <Select value={formData.countryId} onValueChange={(value) => handleInputChange('countryId', value)}>
                         <SelectTrigger className="border-border">
                           <SelectValue placeholder="Select a country" />
@@ -473,10 +557,77 @@ export default function SignUpPage() {
                     </div>
                   </div>
 
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="language-proficiency" className="text-sm font-medium">Language Proficiency</Label>
+                      <Select value={formData.languageProficiency} onValueChange={(value) => handleInputChange('languageProficiency', value)}>
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select proficiency" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="native">Native</SelectItem>
+                          <SelectItem value="fluent">Fluent</SelectItem>
+                          <SelectItem value="intermediate">Intermediate</SelectItem>
+                          <SelectItem value="beginner">Beginner</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="gender" className="text-sm font-medium">Gender</Label>
+                      <Select value={formData.gender || undefined} onValueChange={(value) => handleInputChange('gender', value)}>
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select gender" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="female">Female</SelectItem>
+                          <SelectItem value="male">Male</SelectItem>
+                          <SelectItem value="non_binary">Non-binary</SelectItem>
+                          <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="age-range" className="text-sm font-medium">Age Range</Label>
+                      <Select value={formData.ageRange || undefined} onValueChange={(value) => handleInputChange('ageRange', value)}>
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select age range" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="under_18">Under 18</SelectItem>
+                          <SelectItem value="18_24">18-24</SelectItem>
+                          <SelectItem value="25_34">25-34</SelectItem>
+                          <SelectItem value="35_44">35-44</SelectItem>
+                          <SelectItem value="45_54">45-54</SelectItem>
+                          <SelectItem value="55_plus">55+</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="education-level" className="text-sm font-medium">Education Level</Label>
+                      <Select value={formData.educationLevel || undefined} onValueChange={(value) => handleInputChange('educationLevel', value)}>
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select education level" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="primary">Primary</SelectItem>
+                          <SelectItem value="secondary">Secondary</SelectItem>
+                          <SelectItem value="university">University</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                          <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
                   {formData.countryId && filteredDistricts.length > 0 && (
                     <div className="grid gap-4 lg:grid-cols-2">
                       <div className="space-y-2">
-                        <Label htmlFor="district" className="text-sm font-medium">District</Label>
+                        <Label htmlFor="district" className="text-sm font-medium">District/Area of Residence</Label>
                         <Select value={formData.districtId || undefined} onValueChange={(value) => handleInputChange('districtId', value)}>
                           <SelectTrigger className="border-border">
                             <SelectValue placeholder="Select a district" />
@@ -501,6 +652,46 @@ export default function SignUpPage() {
                       </div>
                     </div>
                   )}
+
+                  <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
+                    <Label className="text-sm font-medium">Language Participation</Label>
+                    <label className="flex items-start gap-3 rounded-lg border border-border bg-background p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={formData.canReadSentences}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, canReadSentences: e.target.checked }))}
+                      />
+                      <span className="text-sm text-muted-foreground">I can read sentence prompts clearly.</span>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-lg border border-border bg-background p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={formData.canRecordSpeech}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, canRecordSpeech: e.target.checked }))}
+                      />
+                      <span className="text-sm text-muted-foreground">Spoken: I can contribute voice recordings.</span>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-lg border border-border bg-background p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={formData.canTranscribeText}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, canTranscribeText: e.target.checked }))}
+                      />
+                      <span className="text-sm text-muted-foreground">Written: I can transcribe text from audio.</span>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-lg border border-border bg-background p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={formData.canValidateSubmissions}
+                        onChange={(e) => setFormData((prev) => ({ ...prev, canValidateSubmissions: e.target.checked }))}
+                      />
+                      <span className="text-sm text-muted-foreground">I can validate community submissions.</span>
+                    </label>
+                  </div>
 
                   <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
                     <div className="space-y-2">

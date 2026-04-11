@@ -50,6 +50,7 @@ class Submission(Base):
     spontaneous_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     cid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contributor_transcription: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="PENDING_COMMUNITY", index=True
     )
@@ -69,6 +70,9 @@ class Submission(Base):
     )
     tips: Mapped[list[Tip]] = relationship(
         "Tip", back_populates="submission", cascade="all, delete-orphan"
+    )
+    contributor_translations: Mapped[list[ContributorTranslation]] = relationship(
+        "ContributorTranslation", back_populates="submission", cascade="all, delete-orphan"
     )
 
 
@@ -183,4 +187,34 @@ class UserAccount(Base):
     preferred_language: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class ContributorTranslation(Base):
+    """Translations provided by contributors as part of their submission."""
+
+    __tablename__ = "contributor_translations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    submission_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_language_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    target_language_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_text: Mapped[str] = mapped_column(Text, nullable=False)
+    translated_text: Mapped[str] = mapped_column(Text, nullable=False)
+    translator_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="submitted", index=True
+    )  # "submitted", "approved", "rejected"
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+    submission: Mapped[Submission] = relationship(
+        "Submission", back_populates="contributor_translations"
     )

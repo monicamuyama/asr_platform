@@ -1,3 +1,5 @@
+import { getAuthorizationHeader } from '@/lib/auth'
+
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 export type Country = {
@@ -316,13 +318,20 @@ export type RatingCreateRequest = {
   elicitation_compliance: number;
 };
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`);
+async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthorizationHeader(),
+      ...options?.headers,
+    },
+  })
   if (!response.ok) {
-    const payload = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(payload.detail ?? `Request failed: ${response.status}`);
+    const payload = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(payload.detail ?? `Request failed: ${response.status}`)
   }
-  return response.json() as Promise<T>;
+  return response.json() as Promise<T>
 }
 
 export function getUserById(userId: string): Promise<UserResponse> {
@@ -334,57 +343,27 @@ export function listUsersForAdmin(adminUserId: string): Promise<UserResponse[]> 
 }
 
 export async function updateUserById(userId: string, payload: UserUpdateRequest): Promise<UserResponse> {
-  const response = await fetch(`${API_BASE}/auth/users/${userId}`, {
+  return fetchJson<UserResponse>(`/auth/users/${userId}`, {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-    },
     body: JSON.stringify(payload),
   })
-
-  if (!response.ok) {
-    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
-    throw new Error(payloadBody.detail ?? 'User update failed')
-  }
-
-  return response.json() as Promise<UserResponse>
 }
 
 export async function adminUpdateUserRole(userId: string, payload: AdminRoleUpdateRequest): Promise<UserResponse> {
-  const response = await fetch(`${API_BASE}/auth/admin/users/${userId}/role`, {
+  return fetchJson<UserResponse>(`/auth/admin/users/${userId}/role`, {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-    },
     body: JSON.stringify(payload),
   })
-
-  if (!response.ok) {
-    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
-    throw new Error(payloadBody.detail ?? 'Role update failed')
-  }
-
-  return response.json() as Promise<UserResponse>
 }
 
 export async function adminUpdateUserLanguageCapabilities(
   userId: string,
   payload: AdminLanguageCapabilityUpdateRequest,
 ): Promise<UserLanguagePreferenceResponse> {
-  const response = await fetch(`${API_BASE}/auth/admin/users/${userId}/language-preferences`, {
+  return fetchJson<UserLanguagePreferenceResponse>(`/auth/admin/users/${userId}/language-preferences`, {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-    },
     body: JSON.stringify(payload),
   })
-
-  if (!response.ok) {
-    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
-    throw new Error(payloadBody.detail ?? 'Language capability update failed')
-  }
-
-  return response.json() as Promise<UserLanguagePreferenceResponse>
 }
 
 export function getUserProfileById(userId: string): Promise<UserProfileResponse> {
@@ -392,20 +371,10 @@ export function getUserProfileById(userId: string): Promise<UserProfileResponse>
 }
 
 export async function updateUserProfileById(userId: string, payload: UserProfileUpdateRequest): Promise<UserProfileResponse> {
-  const response = await fetch(`${API_BASE}/auth/users/${userId}/profile`, {
+  return fetchJson<UserProfileResponse>(`/auth/users/${userId}/profile`, {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-    },
     body: JSON.stringify(payload),
   })
-
-  if (!response.ok) {
-    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
-    throw new Error(payloadBody.detail ?? 'Profile update failed')
-  }
-
-  return response.json() as Promise<UserProfileResponse>
 }
 
 export function getUserWalletById(userId: string): Promise<WalletResponse> {
@@ -420,20 +389,10 @@ export async function updateUserLanguagePreferencesById(
   userId: string,
   preferences: UserLanguagePreferenceUpdateRequest[],
 ): Promise<UserLanguagePreferenceResponse[]> {
-  const response = await fetch(`${API_BASE}/auth/users/${userId}/language-preferences`, {
+  return fetchJson<UserLanguagePreferenceResponse[]>(`/auth/users/${userId}/language-preferences`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-    },
     body: JSON.stringify({ language_preferences: preferences }),
   })
-
-  if (!response.ok) {
-    const payloadBody = (await response.json().catch(() => ({}))) as { detail?: string }
-    throw new Error(payloadBody.detail ?? 'Language preferences update failed')
-  }
-
-  return response.json() as Promise<UserLanguagePreferenceResponse[]>
 }
 
 export function getConsentDocuments(): Promise<ConsentDocument[]> {

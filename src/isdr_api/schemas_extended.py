@@ -215,8 +215,6 @@ class UserLanguagePreferenceRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_proficiency_level(self) -> "UserLanguagePreferenceRequest":
-        if self.is_primary_language and self.proficiency_level != "native":
-            raise ValueError("Primary languages must be marked as native")
         if not self.is_primary_language and self.proficiency_level == "native":
             raise ValueError("Secondary languages require a self-rated fluency level")
         return self
@@ -324,6 +322,7 @@ class FullSignupRequest(BaseModel):
     preferred_contribution_type: Literal["recording", "validation", "transcription"] = "recording"
     has_speech_impairment: bool = False
     impairment_type: Optional[str] = None
+    can_read_sentences: bool = True
     bio: Optional[str] = None
 
     # Step 4: Demographics
@@ -359,6 +358,7 @@ class SignupResponseSchema(BaseModel):
     demographics: UserDemographicsSchema
     speaker_id: DatasetSpeakerIdSchema
     language_preferences: list[UserLanguagePreferenceSchema]
+    token: AccessTokenSchema
     message: str
 
 
@@ -537,6 +537,118 @@ class TranslationTaskSchema(BaseModel):
     target_language_code: str
     translated_text: str
     status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SourceTranslationQueueItemSchema(BaseModel):
+    id: str
+    source_sentence_id: str
+    source_text: str
+    source_language_id: str
+    target_language_id: str
+    target_language_code: str
+    target_language_name: str
+    machine_prefill_text: Optional[str] = None
+    prefill_provider: Optional[str] = None
+    prefill_confidence: Optional[float] = None
+    translated_text: Optional[str] = None
+    reviewed_text: Optional[str] = None
+    status: str
+    updated_at: datetime
+
+
+class SourceTranslationSubmitRequest(BaseModel):
+    translator_id: str
+    translated_text: str = Field(min_length=1)
+
+
+class SourceTranslationReviewRequest(BaseModel):
+    reviewer_id: str
+    approved: bool
+    reviewed_text: Optional[str] = None
+    notes: Optional[str] = None
+
+
+# ============================================================================
+# 10A. CONTRIBUTOR SUBMISSION & TRANSLATION
+# ============================================================================
+
+
+class SubmissionCreateRequest(BaseModel):
+    """Contribution submission with optional transcription and translations."""
+
+    contributor_id: str
+    language_code: str
+    native_language_code: str
+    target_language_code: str
+    mode: Literal["prompted", "recording", "read_out", "spontaneous_image"]
+    category: Literal["proverb", "idiom", "common_saying", "riddle", "photo_description"]
+    speaker_profile: str
+    consent_version: str
+    hometown: Optional[str] = None
+    residence: Optional[str] = None
+    tribe_ethnicity: Optional[str] = None
+    gender: Optional[str] = None
+    age_group: Optional[str] = None
+    pair_group_id: Optional[str] = None
+    riddle_part: Optional[Literal["challenge", "reveal"]] = None
+    challenge_submission_id: Optional[str] = None
+    reveal_submission_id: Optional[str] = None
+    target_word: Optional[str] = None
+    read_prompt: Optional[str] = None
+    image_prompt_url: Optional[str] = None
+    spontaneous_instruction: Optional[str] = None
+    audio_url: Optional[str] = None
+    cid: Optional[str] = None
+    contributor_transcription: Optional[str] = Field(None, min_length=1)
+    translations: Optional[list["ContributorTranslationSubmitRequest"]] = None
+
+
+class SubmissionResponse(BaseModel):
+    """Response when submission is created/retrieved."""
+
+    id: str
+    contributor_id: str
+    language_code: str
+    native_language_code: str
+    target_language_code: str
+    mode: str
+    category: str
+    status: str
+    speaker_profile: str
+    consent_version: str
+    audio_url: Optional[str] = None
+    contributor_transcription: Optional[str] = None
+    aggregate_score: Optional[float] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ContributorTranslationSubmitRequest(BaseModel):
+    """Translation submitted by contributor with original submission."""
+
+    source_language_code: str
+    target_language_code: str
+    source_text: str = Field(min_length=1)
+    translated_text: str = Field(min_length=1)
+
+
+class ContributorTranslationSchema(BaseModel):
+    """Response schema for contributor translations."""
+
+    id: str
+    submission_id: str
+    source_language_code: str
+    target_language_code: str
+    source_text: str
+    translated_text: str
+    translator_id: str
+    status: str
+    notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

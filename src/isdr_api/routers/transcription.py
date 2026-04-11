@@ -16,6 +16,8 @@ from isdr_api.db_models_extended import (
     PronunciationDictionary,
     Recording,
     SentenceCorpus,
+    SourceSentencePair,
+    SourceTranslationTask,
     TranslationTask,
     TranscriptionTask,
     TranscriptionValidation,
@@ -35,6 +37,9 @@ from isdr_api.schemas_extended import (
     PronunciationDictionarySchema,
     RecordingCreateRequest,
     RecordingSchema,
+    SourceTranslationQueueItemSchema,
+    SourceTranslationReviewRequest,
+    SourceTranslationSubmitRequest,
     TranslationQueueItemSchema,
     TranslationTaskCreateRequest,
     TranslationTaskSchema,
@@ -520,3 +525,192 @@ def create_or_update_translation_task(
     db.commit()
     db.refresh(translation)
     return translation
+
+
+@router.get("/source-translation-queue", response_model=list[SourceTranslationQueueItemSchema])
+def list_source_translation_queue(
+    target_language_id: str,
+    status: str = "queued",
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    tasks = (
+        db.query(SourceTranslationTask)
+        .filter(
+            SourceTranslationTask.target_language_id == target_language_id,
+            SourceTranslationTask.status == status,
+        )
+        .order_by(SourceTranslationTask.updated_at.asc())
+        .all()
+    )
+
+    target_language = db.query(Language).filter(Language.id == target_language_id).first()
+    if target_language is None:
+        raise HTTPException(status_code=404, detail="Target language not found")
+
+    queue_items: list[dict[str, object]] = []
+    for task in tasks:
+        queue_items.append(
+            {
+                "id": task.id,
+                "source_sentence_id": task.source_sentence_id,
+                "source_text": task.source_sentence.sentence_text,
+                "source_language_id": task.source_language_id,
+                "target_language_id": task.target_language_id,
+                "target_language_code": target_language.iso_code,
+                "target_language_name": target_language.language_name,
+                "machine_prefill_text": task.machine_prefill_text,
+                "prefill_provider": task.prefill_provider,
+                "prefill_confidence": task.prefill_confidence,
+                "translated_text": task.translated_text,
+                "reviewed_text": task.reviewed_text,
+                "status": task.status,
+                "updated_at": task.updated_at,
+            }
+        )
+    return queue_items
+
+
+@router.post("/source-translations/{task_id}/submit", response_model=SourceTranslationQueueItemSchema)
+def submit_source_translation(
+    task_id: str,
+    payload: SourceTranslationSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    require_user_match_or_admin(current_user, payload.translator_id)
+
+    task = db.query(SourceTranslationTask).filter(SourceTranslationTask.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Source translation task not found")
+
+    _ensure_user_exists(db, payload.translator_id)
+    _ensure_user_language_capability(db, payload.translator_id, task.target_language_id, "transcribe")
+
+    task.translator_id = payload.translator_id
+    task.translated_text = payload.translated_text.strip()
+    task.status = "submitted"
+    task.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(task)
+
+    target_language = db.query(Language).filter(Language.id == task.target_language_id).first()
+    if target_language is None:
+        raise HTTPException(status_code=404, detail="Target language not found")
+
+    return {
+        "id": task.id,
+        "source_sentence_id": task.source_sentence_id,
+        "source_text": task.source_sentence.sentence_text,
+        "source_language_id": task.source_language_id,
+        "target_language_id": task.target_language_id,
+        "target_language_code": target_language.iso_code,
+        "target_language_name": target_language.language_name,
+        "machine_prefill_text": task.machine_prefill_text,
+        "prefill_provider": task.prefill_provider,
+        "prefill_confidence": task.prefill_confidence,
+        "translated_text": task.translated_text,
+        "reviewed_text": task.reviewed_text,
+        "status": task.status,
+        "updated_at": task.updated_at,
+    }
+
+
+@router.post("/source-translations/{task_id}/review", response_model=SourceTranslationQueueItemSchema)
+def review_source_translation(
+    task_id: str,
+    payload: SourceTranslationReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    require_user_match_or_admin(current_user, payload.reviewer_id)
+
+    reviewer = _ensure_user_exists(db, payload.reviewer_id)
+    if reviewer.role not in {"expert", "admin"}:
+        raise HTTPException(status_code=403, detail="Only expert or admin users can review source translations")
+
+    task = db.query(SourceTranslationTask).filter(SourceTranslationTask.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Source translation task not found")
+    if task.status != "submitted":
+        raise HTTPException(status_code=400, detail="Only submitted tasks can be reviewed")
+
+    task.reviewed_by = payload.reviewer_id
+    task.review_notes = payload.notes
+    task.updated_at = datetime.now(timezone.utc)
+
+    if payload.approved:
+        final_text = (payload.reviewed_text or task.translated_text or "").strip()
+        if not final_text:
+            raise HTTPException(status_code=400, detail="reviewed_text is required when approving without submitted translation")
+        task.reviewed_text = final_text
+        task.status = "approved"
+
+        existing_sentence = (
+            db.query(SentenceCorpus)
+            .filter(
+                SentenceCorpus.language_id == task.target_language_id,
+                SentenceCorpus.sentence_text == final_text,
+            )
+            .first()
+        )
+        if existing_sentence is None:
+            existing_sentence = SentenceCorpus(
+                id=str(uuid.uuid4()),
+                language_id=task.target_language_id,
+                sentence_text=final_text,
+                domain="general",
+                source_type="translation_bootstrap",
+                is_verified=True,
+                created_by=payload.reviewer_id,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(existing_sentence)
+            db.flush()
+
+        pair = (
+            db.query(SourceSentencePair)
+            .filter(
+                SourceSentencePair.source_sentence_id == task.source_sentence_id,
+                SourceSentencePair.target_sentence_id == existing_sentence.id,
+            )
+            .first()
+        )
+        if pair is None:
+            db.add(
+                SourceSentencePair(
+                    id=str(uuid.uuid4()),
+                    source_sentence_id=task.source_sentence_id,
+                    target_sentence_id=existing_sentence.id,
+                    source_language_id=task.source_language_id,
+                    target_language_id=task.target_language_id,
+                    source_dataset="translation_review",
+                    source_row_number=None,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+    else:
+        task.status = "rejected"
+
+    db.commit()
+    db.refresh(task)
+
+    target_language = db.query(Language).filter(Language.id == task.target_language_id).first()
+    if target_language is None:
+        raise HTTPException(status_code=404, detail="Target language not found")
+
+    return {
+        "id": task.id,
+        "source_sentence_id": task.source_sentence_id,
+        "source_text": task.source_sentence.sentence_text,
+        "source_language_id": task.source_language_id,
+        "target_language_id": task.target_language_id,
+        "target_language_code": target_language.iso_code,
+        "target_language_name": target_language.language_name,
+        "machine_prefill_text": task.machine_prefill_text,
+        "prefill_provider": task.prefill_provider,
+        "prefill_confidence": task.prefill_confidence,
+        "translated_text": task.translated_text,
+        "reviewed_text": task.reviewed_text,
+        "status": task.status,
+        "updated_at": task.updated_at,
+    }

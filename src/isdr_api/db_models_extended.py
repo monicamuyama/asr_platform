@@ -299,6 +299,69 @@ class SentenceCorpus(Base):
     dialect: Mapped[Dialect | None] = relationship("Dialect")
 
 
+class SourceSentencePair(Base):
+    __tablename__ = "source_sentence_pairs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    source_sentence_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sentence_corpus.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target_sentence_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sentence_corpus.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_language_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("languages.id"), nullable=False, index=True
+    )
+    target_language_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("languages.id"), nullable=False, index=True
+    )
+    source_dataset: Mapped[str] = mapped_column(String(100), nullable=False, default="english_luganda")
+    source_row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    source_sentence: Mapped[SentenceCorpus] = relationship(
+        "SentenceCorpus", foreign_keys=[source_sentence_id]
+    )
+    target_sentence: Mapped[SentenceCorpus] = relationship(
+        "SentenceCorpus", foreign_keys=[target_sentence_id]
+    )
+    source_language: Mapped[Language] = relationship("Language", foreign_keys=[source_language_id])
+    target_language: Mapped[Language] = relationship("Language", foreign_keys=[target_language_id])
+
+
+class SourceTranslationTask(Base):
+    __tablename__ = "source_translation_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    source_sentence_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sentence_corpus.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_language_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("languages.id"), nullable=False, index=True
+    )
+    target_language_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("languages.id"), nullable=False, index=True
+    )
+    translator_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
+    machine_prefill_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prefill_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    prefill_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    translated_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    source_sentence: Mapped[SentenceCorpus] = relationship("SentenceCorpus", foreign_keys=[source_sentence_id])
+    source_language: Mapped[Language] = relationship("Language", foreign_keys=[source_language_id])
+    target_language: Mapped[Language] = relationship("Language", foreign_keys=[target_language_id])
+
+
 # ============================================================================
 # 5. RECORDINGS & VALIDATION
 # ============================================================================
