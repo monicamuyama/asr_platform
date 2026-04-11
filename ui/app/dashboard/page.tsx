@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Mic, Headphones, FileText, Trophy, Play, Pause, Volume2, Star, LogOut, Settings, TrendingUp, Users } from 'lucide-react'
+import { Mic, Headphones, FileText, Trophy, Play, Pause, Volume2, Star, LogOut, Settings, TrendingUp, Users, Target } from 'lucide-react'
 import Link from 'next/link'
 import { RiddleLinkedRecorder } from '@/components/riddle-linked-recorder'
 import { flushQueuedSubmissions, listQueuedSubmissions, queueSubmission } from '@/lib/offline-submission-queue'
@@ -22,6 +22,7 @@ import {
   getCommunityQueue,
   getConsentDocuments,
   getLanguages,
+  getSourceTranslationQueue,
   getRatingsByUser,
   getPromptBank,
   getTranscriptionQueue,
@@ -35,6 +36,10 @@ import {
   type Language,
   type RatingHistoryItem,
   type PromptBankEntry,
+  reviewSourceTranslation,
+  submitSourceTranslation,
+  type SourceTranslationQueueItem,
+  validateSourceTranslation,
   type TranscriptionQueueItem,
   type TranscriptionTaskResponse,
   type TranscriptionValidationResponse,
@@ -86,6 +91,13 @@ export default function CorpusWeaveDashboard() {
   const [peerValidationCorrection, setPeerValidationCorrection] = useState('')
   const [deepCulturalMeaning, setDeepCulturalMeaning] = useState('')
   const [transcriptionMessage, setTranscriptionMessage] = useState('')
+  const [sourceTranslationQueue, setSourceTranslationQueue] = useState<SourceTranslationQueueItem[]>([])
+  const [sourceSentenceIndex, setSourceSentenceIndex] = useState(0)
+  const [sourceTranslationText, setSourceTranslationText] = useState('')
+  const [sourceTranslationNote, setSourceTranslationNote] = useState('')
+  const [translateMessage, setTranslateMessage] = useState('')
+  const [translateValidationVote, setTranslateValidationVote] = useState<'approve' | 'reject'>('approve')
+  const [isSubmittingTranslation, setIsSubmittingTranslation] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isSubmittingRecording, setIsSubmittingRecording] = useState(false)
   const [isRetryingUploads, setIsRetryingUploads] = useState(false)
@@ -147,6 +159,36 @@ export default function CorpusWeaveDashboard() {
       setPromptBank(data)
     } catch {
       setPromptBank([])
+    }
+  }
+
+  const refreshSourceTranslationQueue = async (languageId: string) => {
+    if (!languageId) {
+      setSourceTranslationQueue([])
+      setSourceSentenceIndex(0)
+      return
+    }
+    try {
+      const statuses: Array<'prefilled' | 'queued' | 'in_validation' | 'validated' | 'approved' | 'rejected'> =
+        user?.role === 'expert' || user?.role === 'admin'
+          ? ['validated', 'in_validation', 'prefilled', 'queued', 'approved', 'rejected']
+          : ['prefilled', 'queued', 'in_validation']
+      const queueBatches = await Promise.all(
+        statuses.map((status) => getSourceTranslationQueue(languageId, status).catch(() => [])),
+      )
+      const merged = queueBatches
+        .flat()
+        .filter((item, index, array) => array.findIndex((entry) => entry.id === item.id) === index)
+      setSourceTranslationQueue(merged)
+      setSourceSentenceIndex((current) => {
+        if (merged.length === 0) {
+          return 0
+        }
+        return Math.min(current, merged.length - 1)
+      })
+    } catch {
+      setSourceTranslationQueue([])
+      setSourceSentenceIndex(0)
     }
   }
 
@@ -232,6 +274,7 @@ export default function CorpusWeaveDashboard() {
           refreshCommunityQueue(),
           refreshTranscriptionQueue(),
           refreshPromptBank(),
+          refreshSourceTranslationQueue(initialTargetLanguageId),
           refreshSubmissions(),
           refreshRatingHistory(userId),
           refreshWallet(userId),
@@ -253,6 +296,13 @@ export default function CorpusWeaveDashboard() {
 
     void loadDashboardData()
   }, [router])
+
+  useEffect(() => {
+    if (!targetLanguageId) {
+      return
+    }
+    void refreshSourceTranslationQueue(targetLanguageId)
+  }, [targetLanguageId])
 
   const refreshQueuedUploadCount = async () => {
     try {
@@ -626,6 +676,26 @@ export default function CorpusWeaveDashboard() {
   }, [ratingHistory, sessionUserId, submissions])
 
   const topContributors: Array<{ name: string; points: string; recordings: number; rating: number }> = []
+
+  const selectedSourceTranslationTask = useMemo(
+    () => sourceTranslationQueue[sourceSentenceIndex] ?? sourceTranslationQueue[0] ?? null,
+    [sourceSentenceIndex, sourceTranslationQueue],
+  )
+
+  useEffect(() => {
+    if (!selectedSourceTranslationTask) {
+      setSourceTranslationText('')
+      return
+    }
+    setSourceTranslationText(selectedSourceTranslationTask.translated_text ?? selectedSourceTranslationTask.machine_prefill_text ?? '')
+    setSourceTranslationNote('')
+  }, [selectedSourceTranslationTask?.id])
+
+  const isReviewer = user?.role === 'expert' || user?.role === 'admin'
+  const canValidateSourceTranslation = useMemo(
+    () => languagePreferences.some((pref) => pref.language_id === targetLanguageId && pref.can_validate),
+    [languagePreferences, targetLanguageId],
+  )
 
   const handleSignOut = () => {
     clearSession()
@@ -1010,6 +1080,84 @@ export default function CorpusWeaveDashboard() {
     }
   }
 
+  const submitDashboardTranslation = async () => {
+    if (!sessionUserId || !selectedSourceTranslationTask) {
+      setTranslateMessage('Select a translation task first.')
+      return
+    }
+    if (!sourceTranslationText.trim()) {
+      setTranslateMessage('Enter translated text before submitting.')
+      return
+    }
+
+    setIsSubmittingTranslation(true)
+    setTranslateMessage('')
+    try {
+      await submitSourceTranslation(selectedSourceTranslationTask.id, {
+        translator_id: sessionUserId,
+        translated_text: sourceTranslationText.trim(),
+      })
+      setTranslateMessage('Translation submitted.')
+      setSourceSentenceIndex((current) => current + 1)
+      await refreshSourceTranslationQueue(targetLanguageId)
+    } catch (err) {
+      setTranslateMessage(err instanceof Error ? err.message : 'Failed to submit translation.')
+    } finally {
+      setIsSubmittingTranslation(false)
+    }
+  }
+
+  const reviewDashboardTranslation = async (approved: boolean) => {
+    if (!sessionUserId || !selectedSourceTranslationTask) {
+      setTranslateMessage('Select a submitted task to review.')
+      return
+    }
+
+    setIsSubmittingTranslation(true)
+    setTranslateMessage('')
+    try {
+      await reviewSourceTranslation(selectedSourceTranslationTask.id, {
+        reviewer_id: sessionUserId,
+        approved,
+        reviewed_text: approved ? sourceTranslationText.trim() || selectedSourceTranslationTask.translated_text : undefined,
+        notes: sourceTranslationNote.trim() || undefined,
+      })
+      setTranslateMessage(approved ? 'Translation approved.' : 'Translation rejected.')
+      await refreshSourceTranslationQueue(targetLanguageId)
+    } catch (err) {
+      setTranslateMessage(err instanceof Error ? err.message : 'Review action failed.')
+    } finally {
+      setIsSubmittingTranslation(false)
+    }
+  }
+
+  const validateDashboardTranslation = async () => {
+    if (!sessionUserId || !selectedSourceTranslationTask) {
+      setTranslateMessage('Select a translation in validation pool first.')
+      return
+    }
+
+    setIsSubmittingTranslation(true)
+    setTranslateMessage('')
+    try {
+      const response = await validateSourceTranslation(selectedSourceTranslationTask.id, {
+        validator_id: sessionUserId,
+        is_valid: translateValidationVote === 'approve',
+        notes: sourceTranslationNote.trim() || undefined,
+      })
+      if (response.status === 'validated') {
+        setTranslateMessage('Validation recorded. This sentence is now ready for expert/admin review.')
+      } else {
+        setTranslateMessage('Validation recorded and sent to pool.')
+      }
+      await refreshSourceTranslationQueue(targetLanguageId)
+    } catch (err) {
+      setTranslateMessage(err instanceof Error ? err.message : 'Failed to submit validation vote.')
+    } finally {
+      setIsSubmittingTranslation(false)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
@@ -1067,15 +1215,33 @@ export default function CorpusWeaveDashboard() {
         {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
         {/* Tabs Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="mb-8 grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+          <TabsList className="mb-8 grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-            <TabsTrigger value="contribute">Contribute</TabsTrigger>
-            <TabsTrigger value="rewards">Rewards</TabsTrigger>
-            <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
+            <TabsTrigger value="record">Record</TabsTrigger>
+            <TabsTrigger value="validate">Validate</TabsTrigger>
+            <TabsTrigger value="transcribe">Transcribe</TabsTrigger>
+            <TabsTrigger value="translate">Translate</TabsTrigger>
           </TabsList>
 
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-8">
+            <Card className="border-border">
+              <CardContent className="p-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" className="border-border" onClick={() => document.getElementById('dashboard-overview')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                    Overview
+                  </Button>
+                  <Button type="button" variant="outline" className="border-border" onClick={() => document.getElementById('dashboard-rewards')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                    Rewards
+                  </Button>
+                  <Button type="button" variant="outline" className="border-border" onClick={() => document.getElementById('dashboard-leaderboard')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                    Leaderboard
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div id="dashboard-overview" className="space-y-8">
             <div className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-transparent to-accent-teal/10 p-6 sm:p-8">
               <h2 className="mb-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
                 Build Inclusive Speech Data
@@ -1131,7 +1297,7 @@ export default function CorpusWeaveDashboard() {
                       <Button
                         className="w-full bg-primary hover:bg-primary/90"
                         onClick={() => {
-                          setActiveTab('contribute')
+                          setActiveTab('validate')
                           setSelectedQueueSubmissionId(task.submissionId)
                           setValidationMessage('')
                         }}
@@ -1165,24 +1331,106 @@ export default function CorpusWeaveDashboard() {
                 </CardContent>
               </Card>
             </div>
+            </div>
+
+            <div id="dashboard-rewards" className="space-y-6">
+              <h3 className="text-xl font-semibold text-foreground">Rewards</h3>
+              <div className="grid gap-6 md:grid-cols-2">
+                <Card className="border-border">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Trophy className="h-5 w-5 text-primary" />
+                      Your Points
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="bg-gradient-to-r from-primary/10 to-accent-teal/10 rounded-xl p-6 border border-primary/20">
+                      <p className="text-sm text-muted-foreground mb-2">Total Points Balance</p>
+                      <p className="text-4xl font-bold text-foreground">{wallet ? wallet.balance.toFixed(2) : '0.00'}</p>
+                      <p className="text-sm text-muted-foreground mt-4">Unlock rewards at 5,000 points</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Button className="w-full bg-primary hover:bg-primary/90">Redeem Points</Button>
+                      <Button variant="outline" className="w-full border-border">View History</Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-border">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Star className="h-5 w-5 text-primary" />
+                      Give Points
+                    </CardTitle>
+                    <CardDescription>Reward other contributors</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <Select disabled>
+                      <SelectTrigger className="border-border">
+                        <SelectValue placeholder="Contributor tipping endpoint not wired yet" />
+                      </SelectTrigger>
+                    </Select>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[10, 50, 100, 250].map(amount => (
+                        <Button key={amount} variant="outline" className="border-border text-sm">
+                          {amount} pts
+                        </Button>
+                      ))}
+                    </div>
+                    <Input placeholder="Add a message..." className="border-border" />
+                    <Button className="w-full bg-primary hover:bg-primary/90">Send Points</Button>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            <div id="dashboard-leaderboard" className="space-y-6">
+              <h3 className="text-xl font-semibold text-foreground">Leaderboard</h3>
+              <Card className="border-border">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Trophy className="h-5 w-5 text-primary" />
+                    Top Contributors
+                  </CardTitle>
+                  <CardDescription>This month&apos;s leading community members</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {topContributors.length === 0 && (
+                      <p className="text-sm text-muted-foreground">Top contributors feed is not available from the backend yet.</p>
+                    )}
+                    {topContributors.map((contributor, idx) => (
+                      <div key={idx} className="flex items-center gap-4 pb-4 border-b border-border last:border-0">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">
+                          {idx + 1}
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-semibold text-foreground">{contributor.name}</p>
+                          <p className="text-sm text-muted-foreground">{contributor.recordings} recordings</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-primary">{contributor.points} pts</p>
+                          <p className="text-sm text-muted-foreground flex items-center justify-end gap-1">
+                            <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
+                            {contributor.rating}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
-          {/* Contribute Tab */}
-          <TabsContent value="contribute" className="space-y-8">
+          {/* Record Tab */}
+          <TabsContent value="record" className="space-y-8">
             <Card className="border-border">
               <CardHeader>
-                <CardTitle>Choose Contribution Category</CardTitle>
-                <CardDescription>
-                  Select a category to route to the right recording flow. Riddles are captured as linked challenge/reveal pairs.
-                </CardDescription>
+                <CardTitle>Choose Recording Category</CardTitle>
+                <CardDescription>Select category and submit spoken recordings.</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="mb-4 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
-                  You are contributing in <strong>{selectedTargetLanguage?.language_name ?? userLanguage}</strong>. The category labels and prompts below follow that language.
-                </div>
-                <div className="mb-4 rounded-xl border border-border bg-background px-4 py-3 text-xs text-muted-foreground">
-                  Primary language drives your default contribution language and leaderboard standing. Secondary languages are available here as additional contribution options.
-                </div>
+              <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
                   {[
                     { key: 'proverb', label: localizedCategoryLabels.proverb },
@@ -1202,411 +1450,334 @@ export default function CorpusWeaveDashboard() {
                     </Button>
                   ))}
                 </div>
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <span>{queuedUploadCount} queued upload{queuedUploadCount === 1 ? '' : 's'} pending sync</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="border-border"
-                    onClick={retryQueuedUploads}
-                    disabled={isRetryingUploads || queuedUploadCount === 0}
-                  >
-                    {isRetryingUploads ? 'Retrying uploads...' : 'Retry Upload'}
-                  </Button>
-                </div>
+
+                {selectedCategory === 'riddle' ? (
+                  <RiddleLinkedRecorder
+                    draftKey={sessionUserId ? `isdr_riddle_pair_draft_${sessionUserId}` : 'isdr_riddle_pair_draft'}
+                    disabled={!selectedTargetLanguage}
+                    onSubmitPair={submitLinkedRiddlePair}
+                  />
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Target Language</Label>
+                      <Select value={targetLanguageId || undefined} onValueChange={setTargetLanguageId}>
+                        <SelectTrigger className="border-border">
+                          <SelectValue placeholder="Select a target language" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {contributorLanguageOptions.map((language) => (
+                            <SelectItem key={language.id} value={language.id}>
+                              {language.language_name}{language.isPrimary ? ' (Primary)' : ' (Secondary)'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="bg-muted/50 rounded-xl p-6 text-center space-y-4">
+                      <p className="font-medium text-foreground">Sentence to record:</p>
+                      <p className="break-words text-base italic text-foreground sm:text-lg">"{recordPrompt}"</p>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{selectedTargetLanguage?.language_name ?? primaryLanguageInfo?.language_name ?? userLanguage}</span>
+                      <span>{recordingDuration}s</span>
+                    </div>
+
+                    <Button
+                      type="button"
+                      onClick={isRecording ? stopRecording : startRecording}
+                      className={`w-full ${isRecording ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'}`}
+                    >
+                      {isRecording ? (
+                        <>
+                          <Pause className="h-4 w-4 mr-2" />
+                          Stop Recording
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="h-4 w-4 mr-2" />
+                          Start Recording
+                        </>
+                      )}
+                    </Button>
+
+                    {recordedAudioUrl && <audio controls className="w-full" src={recordedAudioUrl} />}
+                    <Button
+                      type="button"
+                      className="w-full bg-primary hover:bg-primary/90"
+                      onClick={submitRecording}
+                      disabled={isSubmittingRecording || !recordedAudioDataUrl}
+                    >
+                      {isSubmittingRecording ? 'Submitting...' : 'Submit Recording'}
+                    </Button>
+                  </>
+                )}
+
+                {recordingError && <p className="text-sm text-red-600">{recordingError}</p>}
+                {submissionMessage && <p className="text-sm text-foreground">{submissionMessage}</p>}
               </CardContent>
             </Card>
+          </TabsContent>
 
-            <div className="grid items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
-              <Card className="border-border lg:col-span-1">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Mic className="h-5 w-5 text-primary" />
-                    {selectedCategory === 'riddle' ? 'Record Riddle Challenge' : 'Record Audio'}
-                  </CardTitle>
-                  <CardDescription>Contribute voice data in your language</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {selectedCategory === 'riddle' ? (
-                    <RiddleLinkedRecorder
-                      draftKey={sessionUserId ? `isdr_riddle_pair_draft_${sessionUserId}` : 'isdr_riddle_pair_draft'}
-                      disabled={!selectedTargetLanguage}
-                      onSubmitPair={submitLinkedRiddlePair}
-                    />
-                  ) : (
-                    <>
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Target Language</Label>
-                    <Select
-                      value={targetLanguageId || undefined}
-                      onValueChange={setTargetLanguageId}
-                    >
+          <TabsContent value="validate" className="space-y-8">
+            <Card className="border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Headphones className="h-5 w-5 text-primary" />
+                  Validate Audio
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Submission ID</Label>
+                  <Select value={validationQueue.some((item) => item.id === selectedQueueSubmissionId) ? selectedQueueSubmissionId : ''} onValueChange={setSelectedQueueSubmissionId}>
+                    <SelectTrigger className="border-border">
+                      <SelectValue placeholder="Select a submission" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {validationQueue.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.language_code} · {item.mode} · {item.id.slice(0, 8)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {selectedValidationSubmission?.audio_url ? (
+                  <audio controls className="w-full" src={selectedValidationSubmission.audio_url} />
+                ) : (
+                  <p className="text-xs text-muted-foreground">No validation audio available.</p>
+                )}
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Quality Rating</Label>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => {
+                          setSelectedRating(star)
+                          setValidationScores({ intelligibility: star, recordingQuality: star, compliance: star })
+                        }}
+                        className={`text-3xl transition ${selectedRating >= star ? 'text-yellow-500' : 'text-muted-foreground'}`}
+                      >
+                        ★
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <Button variant="outline" className="w-full border-border" type="button" onClick={submitValidation} disabled={!selectedValidationSubmission}>
+                  Submit Rating
+                </Button>
+                {validationMessage && <p className="text-sm text-foreground">{validationMessage}</p>}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="transcribe" className="space-y-8">
+            <Card className="border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  Transcribe
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Link href="/transcription">
+                  <Button variant="outline" className="w-full border-border">Open Task Dashboard</Button>
+                </Link>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Recording Queue</Label>
+                  <Select value={selectedTranscriptionItem?.recording_id ?? ''} onValueChange={setSelectedTranscriptionRecordingId}>
+                    <SelectTrigger className="border-border">
+                      <SelectValue placeholder="Select a recording" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {transcriptionQueue.map((item) => (
+                        <SelectItem key={item.recording_id} value={item.recording_id}>
+                          {item.language_id} · {item.speaker_type} · {item.recording_id.slice(0, 8)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Textarea
+                  id="transcription"
+                  placeholder="Type what you hear in the recording."
+                  className="border-border resize-none"
+                  rows={4}
+                  value={transcriptionText}
+                  onChange={(event) => setTranscriptionText(event.target.value)}
+                />
+
+                <Button className="w-full bg-primary hover:bg-primary/90" type="button" onClick={submitTranscription}>Submit Transcription</Button>
+                <Button variant="outline" className="w-full border-border" type="button" onClick={submitPeerValidation} disabled={!selectedTranscriptionTaskId}>Save Peer Review</Button>
+                <Button className="w-full bg-primary hover:bg-primary/90" type="button" onClick={graduateTranscription}>Graduate to Prompt Bank</Button>
+                {transcriptionMessage && <p className="text-sm text-foreground">{transcriptionMessage}</p>}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="translate" className="space-y-8">
+            <Card className="border-border">
+              <CardHeader>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <CardTitle className="flex items-center gap-2">
+                      <FileText className="h-5 w-5 text-primary" />
+                      Translate
+                    </CardTitle>
+                    <CardDescription>Translate source sentences into your target language and review where authorized.</CardDescription>
+                  </div>
+                  <div className="w-full sm:w-72 space-y-2">
+                    <Label className="text-sm font-medium flex items-center gap-2">
+                      <Target className="h-4 w-4 text-primary" />
+                      Target Language
+                    </Label>
+                    <Select value={targetLanguageId || undefined} onValueChange={setTargetLanguageId}>
                       <SelectTrigger className="border-border">
-                        <SelectValue placeholder="Select a target language" />
+                        <SelectValue placeholder="Select target language" />
                       </SelectTrigger>
                       <SelectContent>
                         {contributorLanguageOptions.map((language) => (
                           <SelectItem key={language.id} value={language.id}>
-                            {language.language_name}{language.isPrimary ? ' (Primary)' : ' (Secondary)'}
+                            {language.language_name}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="bg-muted/50 rounded-xl p-6 text-center space-y-4">
-                    <p className="font-medium text-foreground">Sentence to record:</p>
-                    <p className="break-words text-base italic text-foreground sm:text-lg">
-                      "{recordPrompt}"
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{selectedTargetLanguage?.language_name ?? primaryLanguageInfo?.language_name ?? userLanguage}</span>
-                    <span>{recordingDuration}s</span>
-                  </div>
-                  <Button 
-                    type="button"
-                    onClick={isRecording ? stopRecording : startRecording}
-                    className={`w-full ${isRecording ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'}`}
-                  >
-                    {isRecording ? (
-                      <>
-                        <Pause className="h-4 w-4 mr-2" />
-                        Stop Recording
-                      </>
-                    ) : (
-                      <>
-                        <Mic className="h-4 w-4 mr-2" />
-                        Start Recording
-                      </>
-                    )}
-                  </Button>
-                  {recordedAudioUrl && (
-                    <audio controls className="w-full" src={recordedAudioUrl} />
-                  )}
-                  {!isRecording && !recordedAudioUrl && (
-                    <Button variant="outline" className="w-full border-border">
-                      <Play className="h-4 w-4 mr-2" />
-                      Playback
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    className="w-full bg-primary hover:bg-primary/90"
-                    onClick={submitRecording}
-                    disabled={isSubmittingRecording || !recordedAudioDataUrl}
-                  >
-                    {isSubmittingRecording ? 'Submitting...' : 'Submit Recording'}
-                  </Button>
-                    </>
-                  )}
-                  {recordingError && <p className="text-sm text-red-600">{recordingError}</p>}
-                  {submissionMessage && <p className="text-sm text-foreground">{submissionMessage}</p>}
-                </CardContent>
-              </Card>
-
-              <Card className="border-border lg:col-span-1">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Headphones className="h-5 w-5 text-primary" />
-                    Validate Audio
-                  </CardTitle>
-                  <CardDescription>Review and rate submissions</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Submission ID</Label>
-                    <Select
-                      value={validationQueue.some((item) => item.id === selectedQueueSubmissionId) ? selectedQueueSubmissionId : ''}
-                      onValueChange={setSelectedQueueSubmissionId}
-                    >
-                      <SelectTrigger className="border-border">
-                        <SelectValue placeholder="Select a submission" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {validationQueue.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.language_code} · {item.mode} · {item.id.slice(0, 8)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="bg-muted/50 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Validation prompt</p>
-                        <p className="text-sm font-medium text-foreground">{validationPrompt}</p>
-                      </div>
-                      <Badge variant="outline" className="border-border text-xs">
-                        {selectedValidationSubmission ? `${selectedValidationSubmission.status} · ${selectedValidationSubmission.ratings_count} ratings` : 'No queue items'}
-                      </Badge>
-                    </div>
-                    {selectedValidationSubmission?.audio_url ? (
-                      <audio controls className="w-full" src={selectedValidationSubmission.audio_url} />
-                    ) : (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Volume2 className="h-4 w-4" />
-                        {validationQueue.length === 0
-                          ? 'No community submissions from other contributors are available right now.'
-                          : 'No audio attached to this submission.'}
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Quality Rating</Label>
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4, 5].map(star => (
-                        <button 
-                          key={star}
-                          type="button"
-                          onClick={() => {
-                            setSelectedRating(star)
-                            setValidationScores({ intelligibility: star, recordingQuality: star, compliance: star })
-                          }}
-                          className={`text-3xl transition ${selectedRating >= star ? 'text-yellow-500' : 'text-muted-foreground'}`}
-                        >
-                          ★
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <Button variant="outline" className="w-full border-border" type="button" onClick={submitValidation} disabled={!selectedValidationSubmission}>
-                    Submit Rating
-                  </Button>
-                  {validationMessage && <p className="text-sm text-foreground">{validationMessage}</p>}
-                </CardContent>
-              </Card>
-
-              <Card className="border-border lg:col-span-1">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-primary" />
-                    Transcribe
-                  </CardTitle>
-                  <CardDescription>Write out what you hear</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Link href="/transcription">
-                    <Button variant="outline" className="w-full border-border">Open Task Dashboard</Button>
-                  </Link>
-                  <div className="bg-muted/50 rounded-xl p-4 flex items-center justify-center">
-                    <Volume2 className="h-8 w-8 text-primary" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Recording Queue</Label>
-                    <Select
-                      value={selectedTranscriptionItem?.recording_id ?? ''}
-                      onValueChange={setSelectedTranscriptionRecordingId}
-                    >
-                      <SelectTrigger className="border-border">
-                        <SelectValue placeholder="Select a recording" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {transcriptionQueue.map((item) => (
-                          <SelectItem key={item.recording_id} value={item.recording_id}>
-                            {item.language_id} · {item.speaker_type} · {item.recording_id.slice(0, 8)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="rounded-xl border border-border bg-muted/40 p-4 space-y-3">
-                    {selectedTranscriptionItem?.audio_url ? (
-                      <audio controls className="w-full" src={selectedTranscriptionItem.audio_url} />
-                    ) : (
-                      <p className="text-xs text-muted-foreground">No audio is attached to the selected recording.</p>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      {selectedTranscriptionItem?.transcript_count ? `${selectedTranscriptionItem.transcript_count} transcription task(s)` : 'No transcription tasks yet'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {selectedTranscriptionItem?.validation_count ? `${selectedTranscriptionItem.validation_count} peer validation(s)` : 'No peer validations yet'}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="transcription" className="text-sm font-medium">Your Transcription</Label>
-                    <Textarea 
-                      id="transcription"
-                      placeholder="Type what you hear in the recording." 
-                      className="border-border resize-none" 
-                      rows={4}
-                      value={transcriptionText}
-                      onChange={(event) => setTranscriptionText(event.target.value)}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">Confidence</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={transcriptionConfidence}
-                        onChange={(event) => setTranscriptionConfidence(Number(event.target.value))}
-                        className="border-border"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">Task Status</Label>
-                      <Input value={selectedTranscriptionItem?.status ?? 'none'} readOnly className="border-border" />
-                    </div>
-                  </div>
-                  <Button className="w-full bg-primary hover:bg-primary/90" type="button" onClick={submitTranscription}>Submit Transcription</Button>
-                  <div className="space-y-2 rounded-xl border border-border bg-background p-4">
-                    <p className="text-sm font-medium text-foreground">Peer Review</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium">Rating</Label>
-                        <Input
-                          type="number"
-                          min="1"
-                          max="5"
-                          value={peerValidationRating}
-                          onChange={(event) => setPeerValidationRating(Number(event.target.value))}
-                          className="border-border"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium">Is Correct</Label>
-                        <Select value={peerValidationCorrect ? 'true' : 'false'} onValueChange={(value) => setPeerValidationCorrect(value === 'true')}>
-                          <SelectTrigger className="border-border"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="true">Yes</SelectItem>
-                            <SelectItem value="false">No</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="meaning" className="text-sm font-medium">Deep Cultural Meaning</Label>
-                      <Textarea id="meaning" rows={3} className="border-border resize-none" value={deepCulturalMeaning} onChange={(event) => setDeepCulturalMeaning(event.target.value)} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="correction" className="text-sm font-medium">Suggested Correction</Label>
-                      <Textarea id="correction" rows={2} className="border-border resize-none" value={peerValidationCorrection} onChange={(event) => setPeerValidationCorrection(event.target.value)} />
-                    </div>
-                    <Button variant="outline" className="w-full border-border" type="button" onClick={submitPeerValidation} disabled={!selectedTranscriptionTaskId}>Save Peer Review</Button>
-                    <Button className="w-full bg-primary hover:bg-primary/90" type="button" onClick={graduateTranscription}>Graduate to Prompt Bank</Button>
-                  </div>
-                  <div className="rounded-xl border border-border bg-muted/30 p-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Prompt Bank</p>
-                    <p className="text-sm text-foreground">{promptBank.length} verified prompts ready for prompted recording.</p>
-                  </div>
-                  <p className="text-xs text-muted-foreground">The backend now exposes transcription, peer review, and prompt-bank endpoints.</p>
-                  {transcriptionMessage && <p className="text-sm text-foreground">{transcriptionMessage}</p>}
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Rewards Tab */}
-          <TabsContent value="rewards" className="space-y-8">
-            <div className="grid gap-6 md:grid-cols-2">
-              <Card className="border-border">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Trophy className="h-5 w-5 text-primary" />
-                    Your Points
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="bg-gradient-to-r from-primary/10 to-accent-teal/10 rounded-xl p-6 border border-primary/20">
-                    <p className="text-sm text-muted-foreground mb-2">Total Points Balance</p>
-                    <p className="text-4xl font-bold text-foreground">{wallet ? wallet.balance.toFixed(2) : '0.00'}</p>
-                    <p className="text-sm text-muted-foreground mt-4">Unlock rewards at 5,000 points</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Button className="w-full bg-primary hover:bg-primary/90">Redeem Points</Button>
-                    <Button variant="outline" className="w-full border-border">View History</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-border">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Star className="h-5 w-5 text-primary" />
-                    Give Points
-                  </CardTitle>
-                  <CardDescription>Reward other contributors</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Select disabled>
-                    <SelectTrigger className="border-border">
-                      <SelectValue placeholder="Contributor tipping endpoint not wired yet" />
-                    </SelectTrigger>
-                  </Select>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[10, 50, 100, 250].map(amount => (
-                      <Button key={amount} variant="outline" className="border-border text-sm">
-                        {amount} pts
-                      </Button>
-                    ))}
-                  </div>
-                  <Input placeholder="Add a message..." className="border-border" />
-                  <Button className="w-full bg-primary hover:bg-primary/90">Send Points</Button>
-                </CardContent>
-              </Card>
-
-              <Card className="border-border md:col-span-2">
-                <CardHeader>
-                  <CardTitle>Language Leaderboards</CardTitle>
-                  <CardDescription>Top contributors in each language get bonus points</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-4 md:grid-cols-3">
-                    {(languagePreferences.length > 0 ? [userLanguage] : []).map(lang => (
-                      <div key={lang} className="border border-border rounded-lg p-4">
-                        <p className="font-semibold text-foreground">{lang}</p>
-                        <p className="text-2xl font-bold text-primary mt-2">{wallet ? wallet.balance.toFixed(2) : '0.00'} pts</p>
-                        <p className="text-sm text-muted-foreground mt-1">Your current balance</p>
-                        <Button size="sm" className="w-full mt-4 bg-primary hover:bg-primary/90">View Rankings</Button>
-                      </div>
-                    ))}
-                    {languagePreferences.length === 0 && (
-                      <p className="text-sm text-muted-foreground md:col-span-3">No leaderboard data available from backend yet.</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Leaderboard Tab */}
-          <TabsContent value="leaderboard" className="space-y-8">
-            <Card className="border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Trophy className="h-5 w-5 text-primary" />
-                  Top Contributors
-                </CardTitle>
-                <CardDescription>This month&apos;s leading community members</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {topContributors.length === 0 && (
-                    <p className="text-sm text-muted-foreground">Top contributors feed is not available from the backend yet.</p>
-                  )}
-                  {topContributors.map((contributor, idx) => (
-                    <div key={idx} className="flex items-center gap-4 pb-4 border-b border-border last:border-0">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">
-                        {idx + 1}
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-semibold text-foreground">{contributor.name}</p>
-                        <p className="text-sm text-muted-foreground">{contributor.recordings} recordings</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-primary">{contributor.points} pts</p>
-                        <p className="text-sm text-muted-foreground flex items-center justify-end gap-1">
-                          <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
-                          {contributor.rating}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
                 </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">English Source Sentences</Label>
+                    <span className="text-xs text-muted-foreground">
+                      {sourceTranslationQueue.length === 0 ? '0 / 0' : `${sourceSentenceIndex + 1} / ${sourceTranslationQueue.length}`}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, sourceTranslationQueue.length - 1)}
+                    value={sourceSentenceIndex}
+                    onChange={(event) => setSourceSentenceIndex(Number(event.target.value))}
+                    className="w-full"
+                    disabled={sourceTranslationQueue.length <= 1}
+                  />
+                </div>
+
+                <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">English Source Text</p>
+                    <Badge variant="outline" className="border-border text-xs">
+                      {selectedSourceTranslationTask?.status ?? 'no-source'}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-foreground">{selectedSourceTranslationTask?.source_text ?? 'No English source sentence available for this language yet.'}</p>
+                  {selectedSourceTranslationTask?.machine_prefill_text && (
+                    <p className="text-xs text-muted-foreground">Prefill suggestion: {selectedSourceTranslationTask.machine_prefill_text}</p>
+                  )}
+                  {selectedSourceTranslationTask && (
+                    <p className="text-xs text-muted-foreground">
+                      Pool validations: {selectedSourceTranslationTask.approval_count}/{selectedSourceTranslationTask.validation_count} approvals
+                    </p>
+                  )}
+                </div>
+
+                {!selectedSourceTranslationTask && (
+                  <p className="text-xs text-muted-foreground">
+                    No English source sentences were returned for this target language yet.
+                  </p>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="dashboard-translation-text" className="text-sm font-medium">Translated Text</Label>
+                  <Textarea
+                    id="dashboard-translation-text"
+                    rows={4}
+                    className="border-border resize-none"
+                    placeholder="Write the translation here"
+                    value={sourceTranslationText}
+                    onChange={(event) => setSourceTranslationText(event.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="dashboard-translation-note" className="text-sm font-medium">Notes</Label>
+                  <Textarea
+                    id="dashboard-translation-note"
+                    rows={2}
+                    className="border-border resize-none"
+                    placeholder="Optional notes"
+                    value={sourceTranslationNote}
+                    onChange={(event) => setSourceTranslationNote(event.target.value)}
+                  />
+                </div>
+
+                <Button
+                  className="w-full bg-primary hover:bg-primary/90"
+                  onClick={submitDashboardTranslation}
+                  disabled={!selectedSourceTranslationTask || isSubmittingTranslation || !['prefilled', 'queued', 'rejected'].includes(selectedSourceTranslationTask.status)}
+                >
+                  {isSubmittingTranslation ? 'Submitting...' : 'Submit Translation'}
+                </Button>
+
+                {canValidateSourceTranslation && selectedSourceTranslationTask?.status === 'in_validation' && (
+                  <div className="space-y-2 rounded-xl border border-border bg-background p-4">
+                    <p className="text-sm font-medium text-foreground">Validation Pool Vote</p>
+                    <Select value={translateValidationVote} onValueChange={(value) => setTranslateValidationVote(value as 'approve' | 'reject')}>
+                      <SelectTrigger className="border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="approve">Approve translation quality</SelectItem>
+                        <SelectItem value="reject">Reject / needs corrections</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="outline"
+                      className="w-full border-border"
+                      onClick={validateDashboardTranslation}
+                      disabled={isSubmittingTranslation}
+                    >
+                      Submit Validation Vote
+                    </Button>
+                  </div>
+                )}
+
+                {isReviewer && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      variant="outline"
+                      className="border-border"
+                      onClick={() => reviewDashboardTranslation(true)}
+                      disabled={!selectedSourceTranslationTask || isSubmittingTranslation || selectedSourceTranslationTask.status !== 'validated'}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="border-border"
+                      onClick={() => reviewDashboardTranslation(false)}
+                      disabled={!selectedSourceTranslationTask || isSubmittingTranslation || selectedSourceTranslationTask.status !== 'validated'}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  {sourceTranslationQueue.length} task(s) in current queue.
+                </p>
+                {translateMessage && <p className="text-sm text-foreground">{translateMessage}</p>}
               </CardContent>
             </Card>
           </TabsContent>

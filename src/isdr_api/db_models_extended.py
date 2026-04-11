@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, Boolean, Numeric
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, Boolean, Numeric, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -360,6 +360,32 @@ class SourceTranslationTask(Base):
     source_sentence: Mapped[SentenceCorpus] = relationship("SentenceCorpus", foreign_keys=[source_sentence_id])
     source_language: Mapped[Language] = relationship("Language", foreign_keys=[source_language_id])
     target_language: Mapped[Language] = relationship("Language", foreign_keys=[target_language_id])
+    validations: Mapped[list[SourceTranslationValidation]] = relationship(
+        "SourceTranslationValidation",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
+
+class SourceTranslationValidation(Base):
+    __tablename__ = "source_translation_validations"
+    __table_args__ = (
+        UniqueConstraint("source_translation_task_id", "validator_id", name="uq_source_translation_validation_task_validator"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    source_translation_task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("source_translation_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    validator_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    is_valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    task: Mapped[SourceTranslationTask] = relationship("SourceTranslationTask", back_populates="validations")
 
 
 # ============================================================================

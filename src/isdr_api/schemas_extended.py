@@ -556,6 +556,8 @@ class SourceTranslationQueueItemSchema(BaseModel):
     prefill_confidence: Optional[float] = None
     translated_text: Optional[str] = None
     reviewed_text: Optional[str] = None
+    validation_count: int = 0
+    approval_count: int = 0
     status: str
     updated_at: datetime
 
@@ -569,6 +571,12 @@ class SourceTranslationReviewRequest(BaseModel):
     reviewer_id: str
     approved: bool
     reviewed_text: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SourceTranslationValidationRequest(BaseModel):
+    validator_id: str
+    is_valid: bool
     notes: Optional[str] = None
 
 

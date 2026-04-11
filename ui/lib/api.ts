@@ -284,6 +284,43 @@ export type TranslationTaskResponse = {
   updated_at: string;
 };
 
+export type SourceTranslationQueueItem = {
+  id: string;
+  source_sentence_id: string;
+  source_text: string;
+  source_language_id: string;
+  target_language_id: string;
+  target_language_code: string;
+  target_language_name: string;
+  machine_prefill_text: string | null;
+  prefill_provider: string | null;
+  prefill_confidence: number | null;
+  translated_text: string | null;
+  reviewed_text: string | null;
+  validation_count: number;
+  approval_count: number;
+  status: string;
+  updated_at: string;
+};
+
+export type SourceTranslationSubmitRequest = {
+  translator_id: string;
+  translated_text: string;
+};
+
+export type SourceTranslationReviewRequest = {
+  reviewer_id: string;
+  approved: boolean;
+  reviewed_text?: string | null;
+  notes?: string | null;
+};
+
+export type SourceTranslationValidationRequest = {
+  validator_id: string;
+  is_valid: boolean;
+  notes?: string | null;
+};
+
 export type SubmissionCreateRequest = {
   contributor_id: string;
   language_code: string;
@@ -539,4 +576,43 @@ export async function createOrUpdateTranslationTask(
   }
 
   return response.json() as Promise<TranslationTaskResponse>
+}
+
+export function getSourceTranslationQueue(
+  targetLanguageId: string,
+  status: 'queued' | 'prefilled' | 'in_validation' | 'validated' | 'approved' | 'rejected' = 'prefilled',
+): Promise<SourceTranslationQueueItem[]> {
+  return fetchJson<SourceTranslationQueueItem[]>(
+    `/transcription/source-translation-queue?target_language_id=${encodeURIComponent(targetLanguageId)}&status=${encodeURIComponent(status)}`,
+  )
+}
+
+export async function validateSourceTranslation(
+  taskId: string,
+  payload: SourceTranslationValidationRequest,
+): Promise<SourceTranslationQueueItem> {
+  return fetchJson<SourceTranslationQueueItem>(`/transcription/source-translations/${taskId}/validations`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function submitSourceTranslation(
+  taskId: string,
+  payload: SourceTranslationSubmitRequest,
+): Promise<SourceTranslationQueueItem> {
+  return fetchJson<SourceTranslationQueueItem>(`/transcription/source-translations/${taskId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function reviewSourceTranslation(
+  taskId: string,
+  payload: SourceTranslationReviewRequest,
+): Promise<SourceTranslationQueueItem> {
+  return fetchJson<SourceTranslationQueueItem>(`/transcription/source-translations/${taskId}/review`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }

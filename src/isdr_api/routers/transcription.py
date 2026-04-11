@@ -18,6 +18,7 @@ from isdr_api.db_models_extended import (
     SentenceCorpus,
     SourceSentencePair,
     SourceTranslationTask,
+    SourceTranslationValidation,
     TranslationTask,
     TranscriptionTask,
     TranscriptionValidation,
@@ -40,6 +41,7 @@ from isdr_api.schemas_extended import (
     SourceTranslationQueueItemSchema,
     SourceTranslationReviewRequest,
     SourceTranslationSubmitRequest,
+    SourceTranslationValidationRequest,
     TranslationQueueItemSchema,
     TranslationTaskCreateRequest,
     TranslationTaskSchema,
@@ -51,6 +53,8 @@ from isdr_api.schemas_extended import (
 )
 
 router = APIRouter(prefix="/transcription", tags=["transcription"])
+
+SOURCE_TRANSLATION_MIN_APPROVALS = 2
 
 
 def _get_recording_or_404(db: Session, recording_id: str) -> Recording:
@@ -549,6 +553,21 @@ def list_source_translation_queue(
 
     queue_items: list[dict[str, object]] = []
     for task in tasks:
+        validation_count = (
+            db.query(func.count(SourceTranslationValidation.id))
+            .filter(SourceTranslationValidation.source_translation_task_id == task.id)
+            .scalar()
+            or 0
+        )
+        approval_count = (
+            db.query(func.count(SourceTranslationValidation.id))
+            .filter(
+                SourceTranslationValidation.source_translation_task_id == task.id,
+                SourceTranslationValidation.is_valid.is_(True),
+            )
+            .scalar()
+            or 0
+        )
         queue_items.append(
             {
                 "id": task.id,
@@ -563,6 +582,8 @@ def list_source_translation_queue(
                 "prefill_confidence": task.prefill_confidence,
                 "translated_text": task.translated_text,
                 "reviewed_text": task.reviewed_text,
+                "validation_count": int(validation_count),
+                "approval_count": int(approval_count),
                 "status": task.status,
                 "updated_at": task.updated_at,
             }
@@ -586,9 +607,15 @@ def submit_source_translation(
     _ensure_user_exists(db, payload.translator_id)
     _ensure_user_language_capability(db, payload.translator_id, task.target_language_id, "transcribe")
 
+    (
+        db.query(SourceTranslationValidation)
+        .filter(SourceTranslationValidation.source_translation_task_id == task.id)
+        .delete(synchronize_session=False)
+    )
+
     task.translator_id = payload.translator_id
     task.translated_text = payload.translated_text.strip()
-    task.status = "submitted"
+    task.status = "in_validation"
     task.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(task)
@@ -610,6 +637,104 @@ def submit_source_translation(
         "prefill_confidence": task.prefill_confidence,
         "translated_text": task.translated_text,
         "reviewed_text": task.reviewed_text,
+        "validation_count": 0,
+        "approval_count": 0,
+        "status": task.status,
+        "updated_at": task.updated_at,
+    }
+
+
+@router.post("/source-translations/{task_id}/validations", response_model=SourceTranslationQueueItemSchema)
+def validate_source_translation(
+    task_id: str,
+    payload: SourceTranslationValidationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    require_user_match_or_admin(current_user, payload.validator_id)
+
+    task = db.query(SourceTranslationTask).filter(SourceTranslationTask.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Source translation task not found")
+    if task.status not in {"in_validation", "submitted"}:
+        raise HTTPException(status_code=400, detail="Only translations in validation pool can be validated")
+
+    _ensure_user_exists(db, payload.validator_id)
+    _ensure_user_language_capability(db, payload.validator_id, task.target_language_id, "validate")
+    if task.translator_id == payload.validator_id:
+        raise HTTPException(status_code=400, detail="Translator cannot validate their own submission")
+
+    existing_validation = (
+        db.query(SourceTranslationValidation)
+        .filter(
+            SourceTranslationValidation.source_translation_task_id == task.id,
+            SourceTranslationValidation.validator_id == payload.validator_id,
+        )
+        .first()
+    )
+
+    if existing_validation is None:
+        existing_validation = SourceTranslationValidation(
+            id=str(uuid.uuid4()),
+            source_translation_task_id=task.id,
+            validator_id=payload.validator_id,
+            is_valid=payload.is_valid,
+            notes=payload.notes,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(existing_validation)
+    else:
+        existing_validation.is_valid = payload.is_valid
+        existing_validation.notes = payload.notes
+
+    db.flush()
+
+    validation_count = (
+        db.query(func.count(SourceTranslationValidation.id))
+        .filter(SourceTranslationValidation.source_translation_task_id == task.id)
+        .scalar()
+        or 0
+    )
+    approval_count = (
+        db.query(func.count(SourceTranslationValidation.id))
+        .filter(
+            SourceTranslationValidation.source_translation_task_id == task.id,
+            SourceTranslationValidation.is_valid.is_(True),
+        )
+        .scalar()
+        or 0
+    )
+    rejection_count = int(validation_count) - int(approval_count)
+
+    if int(approval_count) >= SOURCE_TRANSLATION_MIN_APPROVALS and rejection_count == 0:
+        task.status = "validated"
+    elif rejection_count >= SOURCE_TRANSLATION_MIN_APPROVALS:
+        task.status = "rejected"
+    else:
+        task.status = "in_validation"
+    task.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(task)
+
+    target_language = db.query(Language).filter(Language.id == task.target_language_id).first()
+    if target_language is None:
+        raise HTTPException(status_code=404, detail="Target language not found")
+
+    return {
+        "id": task.id,
+        "source_sentence_id": task.source_sentence_id,
+        "source_text": task.source_sentence.sentence_text,
+        "source_language_id": task.source_language_id,
+        "target_language_id": task.target_language_id,
+        "target_language_code": target_language.iso_code,
+        "target_language_name": target_language.language_name,
+        "machine_prefill_text": task.machine_prefill_text,
+        "prefill_provider": task.prefill_provider,
+        "prefill_confidence": task.prefill_confidence,
+        "translated_text": task.translated_text,
+        "reviewed_text": task.reviewed_text,
+        "validation_count": int(validation_count),
+        "approval_count": int(approval_count),
         "status": task.status,
         "updated_at": task.updated_at,
     }
@@ -631,8 +756,24 @@ def review_source_translation(
     task = db.query(SourceTranslationTask).filter(SourceTranslationTask.id == task_id).first()
     if task is None:
         raise HTTPException(status_code=404, detail="Source translation task not found")
-    if task.status != "submitted":
-        raise HTTPException(status_code=400, detail="Only submitted tasks can be reviewed")
+    if task.status != "validated":
+        raise HTTPException(status_code=400, detail="Only validation-approved tasks can be reviewed")
+
+    validation_count = (
+        db.query(func.count(SourceTranslationValidation.id))
+        .filter(SourceTranslationValidation.source_translation_task_id == task.id)
+        .scalar()
+        or 0
+    )
+    approval_count = (
+        db.query(func.count(SourceTranslationValidation.id))
+        .filter(
+            SourceTranslationValidation.source_translation_task_id == task.id,
+            SourceTranslationValidation.is_valid.is_(True),
+        )
+        .scalar()
+        or 0
+    )
 
     task.reviewed_by = payload.reviewer_id
     task.review_notes = payload.notes
@@ -644,6 +785,13 @@ def review_source_translation(
             raise HTTPException(status_code=400, detail="reviewed_text is required when approving without submitted translation")
         task.reviewed_text = final_text
         task.status = "approved"
+
+        source_language = db.query(Language).filter(Language.id == task.source_language_id).first()
+        target_language_for_pair = db.query(Language).filter(Language.id == task.target_language_id).first()
+        if source_language is None or target_language_for_pair is None:
+            raise HTTPException(status_code=404, detail="Source or target language not found")
+
+        source_dataset_label = f"{source_language.language_name.lower()}-{target_language_for_pair.language_name.lower()}"
 
         existing_sentence = (
             db.query(SentenceCorpus)
@@ -683,11 +831,13 @@ def review_source_translation(
                     target_sentence_id=existing_sentence.id,
                     source_language_id=task.source_language_id,
                     target_language_id=task.target_language_id,
-                    source_dataset="translation_review",
+                    source_dataset=source_dataset_label,
                     source_row_number=None,
                     created_at=datetime.now(timezone.utc),
                 )
             )
+        else:
+            pair.source_dataset = source_dataset_label
     else:
         task.status = "rejected"
 
@@ -711,6 +861,8 @@ def review_source_translation(
         "prefill_confidence": task.prefill_confidence,
         "translated_text": task.translated_text,
         "reviewed_text": task.reviewed_text,
+        "validation_count": int(validation_count),
+        "approval_count": int(approval_count),
         "status": task.status,
         "updated_at": task.updated_at,
     }

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import inspect
 
 revision: str = "002_complete"
 down_revision: str | None = "001"
@@ -19,6 +20,23 @@ def upgrade() -> None:
     # ========================================================================
     # 1. USER & AUTHENTICATION (extending users table)
     # ========================================================================
+
+    bind = op.get_bind()
+    inspector = inspect(bind)
+
+    if not inspector.has_table("users"):
+        op.create_table(
+            "users",
+            sa.Column("id", sa.String(36), nullable=False),
+            sa.Column("full_name", sa.String(255), nullable=False),
+            sa.Column("email", sa.String(255), nullable=False),
+            sa.Column("password_hash", sa.String(255), nullable=True),
+            sa.Column("onboarding_completed", sa.Boolean(), nullable=False, server_default="false"),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        op.create_index("ix_users_email", "users", ["email"], unique=True)
 
     # Update users table with new fields if needed
     op.add_column("users", sa.Column("phone_number", sa.String(20), nullable=True))
