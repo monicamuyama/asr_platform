@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 
 from isdr_api.database import get_db
 from isdr_api.db_models_extended import (
+    DatasetEntry,
+    DatasetSpeakerId,
+    ExpertReview,
     Language,
+    PronunciationDictionary,
     Recording,
     SentenceCorpus,
     TranslationTask,
@@ -20,9 +24,17 @@ from isdr_api.db_models_extended import (
 )
 from isdr_api.language_matching import require_language_capability
 from isdr_api.language_matching import list_language_matched_validator_ids
+from isdr_api.security import get_current_user, require_user_match_or_admin
 from isdr_api.schemas_extended import (
+    DatasetEntrySchema,
+    ExpertReviewCreateRequest,
+    ExpertReviewSchema,
     GraduateTranscriptionRequest,
     PromptBankEntrySchema,
+    PronunciationDictionaryCreateRequest,
+    PronunciationDictionarySchema,
+    RecordingCreateRequest,
+    RecordingSchema,
     TranslationQueueItemSchema,
     TranslationTaskCreateRequest,
     TranslationTaskSchema,
@@ -66,6 +78,53 @@ def _ensure_user_language_capability(
     capability: str,
 ) -> None:
     require_language_capability(db, user_id, language_id, capability)
+
+
+def _get_dataset_speaker_id(db: Session, user_id: str) -> DatasetSpeakerId:
+    speaker = db.query(DatasetSpeakerId).filter(DatasetSpeakerId.user_id == user_id).first()
+    if speaker is None:
+        raise HTTPException(status_code=400, detail="Dataset speaker ID not found for user")
+    return speaker
+
+
+@router.post("/recordings", response_model=RecordingSchema)
+def create_recording(
+    payload: RecordingCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Recording:
+    require_user_match_or_admin(current_user, payload.user_id)
+
+    _ensure_user_exists(db, payload.user_id)
+    _ensure_user_language_capability(db, payload.user_id, payload.language_id, "record")
+
+    if payload.sentence_id is not None:
+        sentence = db.query(SentenceCorpus).filter(SentenceCorpus.id == payload.sentence_id).first()
+        if sentence is None:
+            raise HTTPException(status_code=404, detail="Sentence prompt not found")
+        if sentence.language_id != payload.language_id:
+            raise HTTPException(status_code=400, detail="Sentence language does not match recording language")
+
+    recording = Recording(
+        id=str(uuid.uuid4()),
+        user_id=payload.user_id,
+        sentence_id=payload.sentence_id,
+        language_id=payload.language_id,
+        dialect_id=payload.dialect_id,
+        audio_url=payload.audio_url,
+        duration_seconds=payload.duration_seconds,
+        audio_quality_score=payload.audio_quality_score,
+        speaker_type=payload.speaker_type,
+        recording_device=payload.recording_device,
+        noise_level=payload.noise_level,
+        status="pending_transcription",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(recording)
+    db.commit()
+    db.refresh(recording)
+    return recording
 
 
 @router.get("/queue", response_model=list[TranscriptionQueueItemSchema])
@@ -118,7 +177,13 @@ def list_transcription_queue(db: Session = Depends(get_db)) -> list[dict[str, ob
 
 
 @router.post("/tasks", response_model=TranscriptionTaskSchema)
-def upsert_transcription_task(payload: TranscriptionTaskCreateRequest, db: Session = Depends(get_db)) -> TranscriptionTask:
+def upsert_transcription_task(
+    payload: TranscriptionTaskCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TranscriptionTask:
+    require_user_match_or_admin(current_user, payload.transcriber_id)
+
     recording = _get_recording_or_404(db, payload.recording_id)
     _ensure_user_exists(db, payload.transcriber_id)
     _ensure_user_language_capability(db, payload.transcriber_id, recording.language_id, "transcribe")
@@ -170,7 +235,10 @@ def create_transcription_validation(
     task_id: str,
     payload: TranscriptionValidationCreateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> TranscriptionValidation:
+    require_user_match_or_admin(current_user, payload.validator_id)
+
     task = db.query(TranscriptionTask).filter(TranscriptionTask.id == task_id).first()
     if task is None:
         raise HTTPException(status_code=404, detail="Transcription task not found")
@@ -201,12 +269,15 @@ def create_transcription_validation(
     return validation
 
 
-@router.post("/tasks/{task_id}/graduate", response_model=PromptBankEntrySchema)
+@router.post("/tasks/{task_id}/graduate")
 def graduate_transcription_task(
     task_id: str,
     payload: GraduateTranscriptionRequest,
     db: Session = Depends(get_db),
-) -> SentenceCorpus:
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    require_user_match_or_admin(current_user, payload.expert_id)
+
     expert = _ensure_user_exists(db, payload.expert_id)
     if expert.role not in {"expert", "admin"}:
         raise HTTPException(status_code=403, detail="Only expert or admin users can graduate transcriptions")
@@ -223,9 +294,11 @@ def graduate_transcription_task(
         .all()
     )
     if not validations:
-        raise HTTPException(status_code=400, detail="At least one peer validation is required before graduation")
+        raise HTTPException(status_code=400, detail="At least two peer validations are required before graduation")
 
     average_rating = sum(validation.rating for validation in validations) / len(validations)
+    if len(validations) < 2:
+        raise HTTPException(status_code=400, detail="At least two peer validations are required before graduation")
     if average_rating < 4 or not any(validation.is_correct for validation in validations):
         raise HTTPException(status_code=400, detail="Transcription has not met the graduation threshold")
 
@@ -238,11 +311,35 @@ def graduate_transcription_task(
     if not translations:
         raise HTTPException(status_code=400, detail="At least one translation is required before graduation")
 
+    review = ExpertReview(
+        id=str(uuid.uuid4()),
+        recording_id=recording.id,
+        expert_id=payload.expert_id,
+        is_approved=payload.is_approved,
+        corrected_text=payload.corrected_text,
+        quality_tier=payload.quality_tier,
+        condition_annotation=payload.condition_annotation,
+        notes=payload.notes,
+        added_to_dictionary=False,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(review)
+
+    if not payload.is_approved:
+        recording.status = "expert_rejected"
+        recording.updated_at = datetime.now(timezone.utc)
+        task.status = "expert_rejected"
+        task.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(review)
+        return {"review": ExpertReviewSchema.model_validate(review), "dataset_entry": None, "dictionary_entry": None}
+
     existing_entry = (
         db.query(SentenceCorpus)
         .filter(
             SentenceCorpus.language_id == recording.language_id,
-            SentenceCorpus.sentence_text == task.transcribed_text,
+            SentenceCorpus.sentence_text == (payload.corrected_text or task.transcribed_text),
         )
         .first()
     )
@@ -251,7 +348,7 @@ def graduate_transcription_task(
             id=str(uuid.uuid4()),
             language_id=recording.language_id,
             dialect_id=recording.dialect_id,
-            sentence_text=task.transcribed_text,
+            sentence_text=payload.corrected_text or task.transcribed_text,
             domain="community",
             source_type="prompt_bank",
             is_verified=True,
@@ -262,6 +359,45 @@ def graduate_transcription_task(
     else:
         existing_entry.is_verified = True
 
+    speaker = _get_dataset_speaker_id(db, recording.user_id)
+    dataset_entry = (
+        db.query(DatasetEntry)
+        .filter(DatasetEntry.recording_id == recording.id)
+        .first()
+    )
+    if dataset_entry is None:
+        dataset_entry = DatasetEntry(
+            id=str(uuid.uuid4()),
+            recording_id=recording.id,
+            speaker_id=speaker.id,
+            final_transcription=payload.corrected_text or task.transcribed_text,
+            speaker_type=recording.speaker_type,
+            quality_tier=payload.quality_tier,
+            dataset_version="1.0",
+            added_at=datetime.now(timezone.utc),
+        )
+        db.add(dataset_entry)
+
+    dictionary_entry = None
+    if payload.add_to_dictionary:
+        if not payload.dictionary_word or not payload.phoneme_representation:
+            raise HTTPException(
+                status_code=400,
+                detail="dictionary_word and phoneme_representation are required when add_to_dictionary is true",
+            )
+        dictionary_entry = PronunciationDictionary(
+            id=str(uuid.uuid4()),
+            word=payload.dictionary_word,
+            language_id=recording.language_id,
+            dialect_id=recording.dialect_id,
+            phoneme_representation=payload.phoneme_representation,
+            audio_reference_id=recording.id,
+            verified_by=payload.expert_id,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(dictionary_entry)
+        review.added_to_dictionary = True
+
     recording.sentence_id = existing_entry.id
     recording.status = "graduated"
     recording.updated_at = datetime.now(timezone.utc)
@@ -269,7 +405,21 @@ def graduate_transcription_task(
     task.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(existing_entry)
-    return existing_entry
+    db.refresh(review)
+    db.refresh(dataset_entry)
+    if dictionary_entry is not None:
+        db.refresh(dictionary_entry)
+
+    return {
+        "review": ExpertReviewSchema.model_validate(review),
+        "dataset_entry": DatasetEntrySchema.model_validate(dataset_entry),
+        "dictionary_entry": (
+            PronunciationDictionarySchema.model_validate(dictionary_entry)
+            if dictionary_entry is not None
+            else None
+        ),
+        "prompt_bank_entry": PromptBankEntrySchema.model_validate(existing_entry),
+    }
 
 
 @router.get("/prompt-bank", response_model=list[PromptBankEntrySchema])
@@ -323,7 +473,10 @@ def create_or_update_translation_task(
     task_id: str,
     payload: TranslationTaskCreateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> TranslationTask:
+    require_user_match_or_admin(current_user, payload.translator_id)
+
     task = db.query(TranscriptionTask).filter(TranscriptionTask.id == task_id).first()
     if task is None:
         raise HTTPException(status_code=404, detail="Transcription task not found")

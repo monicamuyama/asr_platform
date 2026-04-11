@@ -27,6 +27,7 @@ from isdr_api.db_models_extended import (  # noqa: F401 - deliberate use of exte
     Wallet,
 )
 from isdr_api.schemas_extended import (
+    AccessTokenSchema,
     AdminLanguageCapabilityUpdateRequest,
     AdminRoleUpdateRequest,
     ConsentDocumentSchema,
@@ -38,6 +39,7 @@ from isdr_api.schemas_extended import (
     LanguageSchema,
     RegionSchema,
     SignupResponseSchema,
+    SigninResponseSchema,
     UserLoginRequest,
     UserUpdateRequest,
     SpeechConditionSchema,
@@ -50,6 +52,7 @@ from isdr_api.schemas_extended import (
     UserSpeechConditionSchema,
     WalletSchema,
 )
+from isdr_api.security import create_access_token, get_current_user, require_user_match_or_admin
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -426,13 +429,23 @@ def signup(payload: FullSignupRequest, db: Session = Depends(get_db)) -> dict:
     }
 
 
-@router.post("/signin", response_model=UserSchema)
-def signin(payload: UserLoginRequest, db: Session = Depends(get_db)) -> User:
+@router.post("/signin", response_model=SigninResponseSchema)
+def signin(payload: UserLoginRequest, db: Session = Depends(get_db)) -> dict[str, object]:
     """Sign in with email and password."""
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or user.password_hash != hash_password(payload.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return user
+    token_payload = create_access_token(user)
+    return {
+        "user": UserSchema.model_validate(user),
+        "token": AccessTokenSchema.model_validate(token_payload),
+    }
+
+
+@router.get("/me", response_model=UserSchema)
+def get_me(current_user: User = Depends(get_current_user)) -> User:
+    """Get authenticated user profile from bearer token."""
+    return current_user
 
 
 # ============================================================================
@@ -450,8 +463,15 @@ def get_user(user_id: str, db: Session = Depends(get_db)) -> User:
 
 
 @router.patch("/users/{user_id}", response_model=UserSchema)
-def update_user(user_id: str, payload: UserUpdateRequest, db: Session = Depends(get_db)) -> User:
+def update_user(
+    user_id: str,
+    payload: UserUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> User:
     """Update user account fields."""
+    require_user_match_or_admin(current_user, user_id)
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -492,8 +512,11 @@ def update_user_profile(
     user_id: str,
     payload: UserProfileUpdateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> UserProfile:
     """Update user profile fields for settings and onboarding."""
+    require_user_match_or_admin(current_user, user_id)
+
     profile = (
         db.query(UserProfile)
         .filter(UserProfile.user_id == user_id)
@@ -567,8 +590,11 @@ def replace_user_language_preferences(
     user_id: str,
     payload: UserLanguagePreferencesUpdateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[UserLanguagePreference]:
     """Replace a user's primary and secondary language preferences."""
+    require_user_match_or_admin(current_user, user_id)
+
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")

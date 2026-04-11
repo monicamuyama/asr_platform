@@ -69,8 +69,18 @@ def require_language_capability(
         raise HTTPException(status_code=403, detail="User is not permitted to transcribe this language")
     if capability == "validate" and not preference.can_validate:
         raise HTTPException(status_code=403, detail="User is not permitted to peer review this language")
+    if capability == "record" and not preference.can_record:
+        raise HTTPException(status_code=403, detail="User is not permitted to record this language")
 
     return preference
+
+
+def require_recording_capability(
+    db: Session,
+    user_id: str,
+    language_id: str,
+) -> UserLanguagePreference:
+    return require_language_capability(db, user_id, language_id, "record")
 
 
 def recording_reward_for_preference(preference: UserLanguagePreference) -> float:

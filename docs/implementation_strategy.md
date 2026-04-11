@@ -1,107 +1,86 @@
-# ISDR Implementation Strategy (MVP -> V1)
+# ISDR Implementation Strategy (Extended Runtime)
 
-> Archived planning note: this strategy targets an earlier MVP workflow.
-> The active runtime is extended-only and uses `/auth/*` endpoints.
+## 1) Objective
+Operate a single, research-grade runtime that supports:
+- Full signup/authentication with consent enforcement
+- Inclusive contributor onboarding for normal and impaired speech
+- Recording ingestion tied to language permissions
+- End-to-end transcription and translation workflow
+- Expert graduation into dataset + pronunciation dictionary
+- Privacy-preserving speaker identities for published data
 
-## 1) Goal
-Build a production-oriented MVP of the Inclusive Speech Data Refinery (ISDR) that supports:
-- Contributor audio submission with metadata
-- Tier-1 community validation with quorum + thresholds
-- Tier-2 expert validation with accept/reject + annotation
-- Provenance-aware storage references (CID-first model)
-- Governance-configurable rating/threshold parameters
+## 2) Active Architecture
+- Backend: FastAPI
+- Persistence: SQLAlchemy extended schema
+- API domains:
+  - `/auth/*` for signup, profile context, consent, geography/language reference data
+  - `/transcription/*` for recording, queueing, transcription, validation, translation, graduation
 
-The MVP excludes on-chain settlement/payments at first, but keeps interfaces ready for a later Proof-of-Quality integration.
+Legacy submission/community/tips/governance runtime is retired from active routing.
 
-## 2) Product Scope
-### In scope (MVP)
-- User roles: Contributor, Community Validator, Expert Validator, Admin
-- Audio upload workflow with task mode: prompted/read/spontaneous
-- Metadata capture: language, speaker profile, elicitation mode, consent version
-- Community rating (3 dimensions, 1-5 scale)
-- Quorum aggregation (trimmed mean) and routing logic (reject/hold/forward)
-- Expert review queue with final decision and annotation
-- Corpus listing for accepted samples with filterable metadata
-- Audit trail of validation events
+## 3) Extended Pipeline (Implemented)
 
-### Out of scope (MVP)
-- Blockchain payments and wallet onboarding
-- Advanced anti-gaming/reputation weighting
-- Multi-tenant federation across regions
-- Full transcription pipeline
+### Stage A: User Signup and Readiness
+1. `POST /auth/signup`
+2. Validate unique email/phone
+3. Validate all active consent documents are accepted
+4. Create user, consent records, profile, demographics
+5. Register speech-condition metadata when provided
+6. Create language preferences with capabilities
+7. Generate dataset speaker code (for example `UG-LG-000001`)
+8. Create wallet
 
-## 3) Proposed Technical Architecture
-### 3.1 Components
-- `web-app`: contributor/validator/expert/admin UI
-- `api-service`: auth, submission, routing, validation, governance-config endpoints
-- `worker-service`: async processing (queue routing, aggregation, notifications)
-- `db`: relational database for users, metadata, ratings, governance configs, audit events
-- `object-storage`: audio file storage (CID-compatible addressing design)
+### Stage B: Recording Ingestion
+1. `POST /transcription/recordings`
+2. Enforce `can_record` language capability
+3. Validate sentence-language consistency when a sentence prompt is supplied
+4. Persist recording in `pending_transcription`
 
-### 3.2 Recommended stack (fast delivery)
-- Frontend: React + TypeScript
-- Backend: FastAPI (Python) + Pydantic
-- Database: PostgreSQL
-- Queue: Redis + RQ/Celery
-- Storage: S3-compatible store (CID field persisted now; IPFS bridge later)
+### Stage C: Transcription Work
+1. `GET /transcription/queue` to list pending items
+2. `POST /transcription/tasks` to submit or update a transcription
+3. Recording moves to `transcribed`
 
-## 4) Data Model (Core)
-- `users(id, role, language_communities, status)`
-- `submissions(id, contributor_id, language_code, mode, speaker_profile, audio_url, cid, consent_version, status)`
-- `community_ratings(id, submission_id, rater_id, intelligibility, recording_quality, elicitation_compliance, weighted_score)`
-- `expert_reviews(id, submission_id, expert_id, decision, quality_tier, condition_annotation, notes)`
-- `governance_params(id, community_key, quorum_q, theta_reject, theta_accept, w_intelligibility, w_recording, w_compliance, active_from)`
-- `audit_events(id, actor_id, entity_type, entity_id, action, payload, created_at)`
+### Stage D: Peer Validation
+1. `POST /transcription/tasks/{task_id}/validations`
+2. Enforce `can_validate` language capability
+3. Require at least 2 validations and graduation threshold (average rating >= 4, at least one `is_correct=true`)
 
-## 5) Routing Logic (MVP)
-1. Submission enters `PENDING_COMMUNITY`.
-2. Gather at least `Q` independent ratings.
-3. Compute per-rater weighted score:
-   - score = w_i*i + w_r*r + w_c*c
-4. Compute trimmed mean across Q scores (drop min and max).
-5. If score < theta_reject -> `REJECTED_COMMUNITY`.
-6. If theta_reject <= score < theta_accept -> `HOLD_COMMUNITY` (request more ratings).
-7. If score >= theta_accept -> `PENDING_EXPERT`.
-8. Expert accepts -> `ACCEPTED`; else `REJECTED_EXPERT` with feedback.
+### Stage E: Translation
+1. `GET /transcription/translation-queue`
+2. `POST /transcription/tasks/{task_id}/translations`
+3. At least one translation required before graduation
 
-## 6) Delivery Plan
-### Phase 0 (Week 1): Foundations
-- Finalize MVP schema + role permissions
-- Initialize repo structure and CI
-- Implement auth + role model
+### Stage F: Expert Graduation
+1. `POST /transcription/tasks/{task_id}/graduate`
+2. Only `expert`/`admin` can graduate
+3. On approval:
+   - Create/update verified prompt-bank sentence
+   - Create dataset entry bound to privacy-safe speaker ID
+   - Optionally create pronunciation dictionary entry
+   - Mark recording and task as `graduated`
+4. On rejection:
+   - Mark task and recording as expert rejected
 
-### Phase 1 (Week 2): Submission + Metadata
-- Upload endpoint + storage integration
-- Submission form for prompted/read/spontaneous
-- Consent versioning on submission
+## 4) Data Integrity Rules
+- Capability checks are language-scoped (`record`, `transcribe`, `validate`)
+- Dataset publication requires speaker ID and expert graduation
+- Dictionary entry creation requires explicit phoneme payload
+- Consent completion required at onboarding
 
-### Phase 2 (Week 3): Community Validation
-- Community queue generation and assignment
-- 3-dimension rating UI and API
-- Quorum + trimmed-mean routing worker
+## 5) Legacy Cleanup Policy
+- Extended runtime is the only mounted API surface
+- Old minimal endpoints are removed from routing and tests
+- Legacy modules are deleted when no active import references remain
 
-### Phase 3 (Week 4): Expert Validation + Corpus View
-- Expert review queue + annotation schema
-- Final decision flow and contributor feedback
-- Accepted corpus search/filter screen
+## 6) Verification Baseline
+- Integration tests verify:
+  - Signup creates user + speaker ID
+  - Recording-to-graduation pipeline creates dataset and dictionary artifacts
+  - Permission failures (for example missing `can_record`) are enforced
 
-### Phase 4 (Week 5): Governance Parameters + Audit
-- Community-specific parameter management UI/API
-- Versioned governance parameter activation
-- Full validation audit log export
-
-## 7) Quality & Risk Controls
-- Prevent self-rating and duplicate rater votes
-- Enforce independent-rater constraints at DB and service layers
-- Add calibration samples for raters before first reviews
-- Log all routing decisions with deterministic calculation payload
-- Add feature flags for high-risk modules (threshold changes)
-
-## 8) Success Metrics (MVP)
-- Median submission-to-final-decision < 48h
-- Community rating completion rate > 85%
-- Expert rejections after community accept < 25% (calibration indicator)
-- Zero missing-provenance records for accepted submissions
-
-## 9) Immediate Next Step
-Start with domain and API contracts so frontend and backend can work in parallel.
+## 7) Immediate Implementation Next Steps
+1. Add reward-distribution hooks at graduation for recording/transcription/validation payouts.
+2. Add authentication tokens and role guards for all write endpoints.
+3. Add idempotency keys for recording upload and graduation operations.
+4. Expand tests for rejection paths, duplicate submissions, and dictionary conflicts.

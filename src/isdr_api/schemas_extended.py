@@ -23,6 +23,17 @@ class UserLoginRequest(BaseModel):
     password: str
 
 
+class AccessTokenSchema(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+
+
+class SigninResponseSchema(BaseModel):
+    user: UserSchema
+    token: AccessTokenSchema
+
+
 class UserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=255)
     email: Optional[str] = Field(None, min_length=5)
@@ -479,6 +490,14 @@ class TranscriptionValidationSchema(BaseModel):
 
 class GraduateTranscriptionRequest(BaseModel):
     expert_id: str
+    is_approved: bool = True
+    corrected_text: Optional[str] = None
+    quality_tier: Literal["Standard", "High", "Reference"] = "Standard"
+    condition_annotation: Optional[str] = None
+    notes: str = Field(min_length=1)
+    add_to_dictionary: bool = False
+    dictionary_word: Optional[str] = None
+    phoneme_representation: Optional[str] = None
 
 
 class PromptBankEntrySchema(BaseModel):
@@ -520,6 +539,101 @@ class TranslationTaskSchema(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RecordingCreateRequest(BaseModel):
+    user_id: str
+    language_id: str
+    dialect_id: Optional[str] = None
+    sentence_id: Optional[str] = None
+    audio_url: str = Field(min_length=1)
+    duration_seconds: float = Field(gt=0)
+    audio_quality_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    speaker_type: Literal["normal", "impaired"] = "normal"
+    recording_device: str = Field(default="mobile", max_length=50)
+    noise_level: str = Field(default="quiet", max_length=50)
+
+
+class RecordingSchema(BaseModel):
+    id: str
+    user_id: str
+    sentence_id: Optional[str]
+    language_id: str
+    dialect_id: Optional[str]
+    audio_url: str
+    duration_seconds: float
+    audio_quality_score: Optional[float]
+    speaker_type: str
+    recording_device: str
+    noise_level: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ExpertReviewCreateRequest(BaseModel):
+    expert_id: str
+    is_approved: bool = True
+    corrected_text: Optional[str] = None
+    quality_tier: Literal["Standard", "High", "Reference"] = "Standard"
+    condition_annotation: Optional[str] = None
+    notes: str = Field(min_length=1)
+    add_to_dictionary: bool = False
+    dictionary_word: Optional[str] = None
+    phoneme_representation: Optional[str] = None
+
+
+class ExpertReviewSchema(BaseModel):
+    id: str
+    recording_id: str
+    expert_id: str
+    is_approved: bool
+    corrected_text: Optional[str]
+    quality_tier: str
+    condition_annotation: Optional[str]
+    notes: str
+    added_to_dictionary: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DatasetEntrySchema(BaseModel):
+    id: str
+    recording_id: str
+    speaker_id: str
+    final_transcription: str
+    speaker_type: str
+    quality_tier: str
+    dataset_version: str
+    added_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PronunciationDictionaryCreateRequest(BaseModel):
+    word: str = Field(min_length=1, max_length=255)
+    language_id: str
+    dialect_id: Optional[str] = None
+    phoneme_representation: str = Field(min_length=1, max_length=500)
+    audio_reference_id: Optional[str] = None
+    verified_by: str
+
+
+class PronunciationDictionarySchema(BaseModel):
+    id: str
+    word: str
+    language_id: str
+    dialect_id: Optional[str]
+    phoneme_representation: str
+    audio_reference_id: Optional[str]
+    verified_by: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

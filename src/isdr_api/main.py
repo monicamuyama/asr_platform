@@ -5,78 +5,13 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from isdr_api.database import Base, SessionLocal, engine
 
 
 def _ensure_runtime_schema() -> None:
-    inspector = inspect(engine)
-    user_columns = {column["name"] for column in inspector.get_columns("users")}
-    submission_columns = {column["name"] for column in inspector.get_columns("submissions")}
-    demographics_columns = {column["name"] for column in inspector.get_columns("user_demographics")}
-
-    with engine.begin() as connection:
-        if "onboarding_completed" not in user_columns:
-            if engine.dialect.name == "sqlite":
-                connection.execute(
-                    text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT 0")
-                )
-            else:
-                connection.execute(
-                    text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT false")
-                )
-
-        missing_submission_columns = [
-            ("target_word", "TEXT"),
-            ("read_prompt", "TEXT"),
-            ("image_prompt_url", "TEXT"),
-            ("spontaneous_instruction", "TEXT"),
-            ("native_language_code", "TEXT"),
-            ("target_language_code", "TEXT"),
-            ("category", "TEXT"),
-            ("hometown", "TEXT"),
-            ("residence", "TEXT"),
-            ("tribe_ethnicity", "TEXT"),
-            ("gender", "TEXT"),
-            ("age_group", "TEXT"),
-            ("pair_group_id", "TEXT"),
-            ("riddle_part", "TEXT"),
-            ("challenge_submission_id", "TEXT"),
-            ("reveal_submission_id", "TEXT"),
-        ]
-        for column_name, column_type in missing_submission_columns:
-            if column_name not in submission_columns:
-                connection.execute(
-                    text(f"ALTER TABLE submissions ADD COLUMN {column_name} {column_type}")
-                )
-
-        connection.execute(
-            text(
-                "UPDATE submissions SET native_language_code = language_code "
-                "WHERE native_language_code IS NULL"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE submissions SET target_language_code = language_code "
-                "WHERE target_language_code IS NULL"
-            )
-        )
-        connection.execute(
-            text("UPDATE submissions SET category = 'proverb' WHERE category IS NULL")
-        )
-
-        # Add district_id and tribe_ethnicity columns to user_demographics if missing
-        if "district_id" not in demographics_columns:
-            connection.execute(
-                text("ALTER TABLE user_demographics ADD COLUMN district_id VARCHAR(36)")
-            )
-        if "tribe_ethnicity" not in demographics_columns:
-            connection.execute(
-                text("ALTER TABLE user_demographics ADD COLUMN tribe_ethnicity VARCHAR(100)")
-            )
+    return None
 
 
 def _seed_reference_data(db: Session) -> None:
@@ -211,7 +146,6 @@ def _seed_reference_data(db: Session) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # Extended mode is the only supported runtime schema.
     from isdr_api import db_models_extended  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
@@ -249,8 +183,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-from isdr_api.routers import auth, submissions, transcription
+from isdr_api.routers import auth, transcription
 
 app.include_router(auth.router)
-app.include_router(submissions.router)
 app.include_router(transcription.router)
