@@ -18,6 +18,10 @@ from isdr_api.db_models_extended import User
 TOKEN_TTL_HOURS = int(os.getenv("ACCESS_TOKEN_TTL_HOURS", "8"))
 JWT_SECRET = os.getenv("JWT_SECRET", "isdr-dev-secret-change-me")
 JWT_ALG = "HS256"
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+
+if APP_ENV == "production" and JWT_SECRET == "isdr-dev-secret-change-me":
+    raise RuntimeError("JWT_SECRET must be set in production")
 
 bearer_scheme = HTTPBearer(auto_error=False)
 

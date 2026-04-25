@@ -10,6 +10,8 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 load_dotenv()
 
 DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./isdr_dev.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 connect_args: dict = (
     {"check_same_thread": False, "timeout": 30}

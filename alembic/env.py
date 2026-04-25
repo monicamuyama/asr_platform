@@ -17,7 +17,10 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 
 # Override sqlalchemy.url from environment
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+migration_url = DATABASE_URL
+if migration_url.startswith("postgres://"):
+    migration_url = migration_url.replace("postgres://", "postgresql://", 1)
+config.set_main_option("sqlalchemy.url", migration_url)
 
 target_metadata = Base.metadata
 

@@ -1,0 +1,94 @@
+name: CI-CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: pytest -q
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install UI dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ui
+
+      - name: Run UI lint
+        run: pnpm lint --if-present
+        working-directory: ui
+
+      - name: Run UI build
+        run: pnpm build
+        working-directory: ui
+
+  deploy_backend:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      - name: Deploy backend to Railway
+        run: railway up --service "$RAILWAY_SERVICE_NAME"
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_NAME: ${{ secrets.RAILWAY_SERVICE_NAME }}
+      - name: Run migrations on Railway
+        run: railway run --service "$RAILWAY_SERVICE_NAME" "PYTHONPATH=src alembic upgrade head"
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_NAME: ${{ secrets.RAILWAY_SERVICE_NAME }}
+
+  deploy_ui:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Install Netlify CLI
+        run: npm i -g netlify-cli
+      - name: Build UI artifact
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+        working-directory: ui
+      - name: Deploy UI to Netlify
+        run: netlify deploy --prod --dir=.next --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN"
+        working-directory: ui
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
