@@ -64,6 +64,17 @@ PYTHONPATH=src uvicorn isdr_api.main:app --reload --host 127.0.0.1 --port 8000
 - http://127.0.0.1:8000/health
 - http://127.0.0.1:8000/auth/consent-documents
 - http://127.0.0.1:8000/auth/languages
+- http://127.0.0.1:8000/auth/signin
+
+## Authentication
+
+- Sign in via `POST /auth/signin` to receive a bearer token.
+- Include `Authorization: Bearer <access_token>` for transcription write endpoints:
+	- `POST /transcription/recordings`
+	- `POST /transcription/tasks`
+	- `POST /transcription/tasks/{task_id}/validations`
+	- `POST /transcription/tasks/{task_id}/translations`
+	- `POST /transcription/tasks/{task_id}/graduate`
 
 ## UI setup (Next.js)
 

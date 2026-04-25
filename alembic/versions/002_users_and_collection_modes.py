@@ -1,7 +1,7 @@
 """Add users and collection-mode fields
 
 Revision ID: 002_users
-Revises: 001
+Revises: 002_complete
 Create Date: 2026-03-30
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "002_users"
-down_revision: str | None = "001"
+down_revision: str | None = "002_complete"
 branch_labels = None
 depends_on = None
 

@@ -35,6 +35,23 @@ def upgrade() -> None:
     op.create_index("ix_submissions_language_code", "submissions", ["language_code"])
     op.create_index("ix_submissions_status", "submissions", ["status"])
 
+    # Base recordings table required by later research-grade migrations.
+    op.create_table(
+        "recordings",
+        sa.Column("id", sa.String(36), nullable=False),
+        sa.Column("user_id", sa.String(36), nullable=False),
+        sa.Column("language_id", sa.String(36), nullable=False),
+        sa.Column("audio_url", sa.Text(), nullable=False),
+        sa.Column("duration_seconds", sa.Float(), nullable=False),
+        sa.Column("status", sa.String(50), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_recordings_user_id", "recordings", ["user_id"])
+    op.create_index("ix_recordings_language_id", "recordings", ["language_id"])
+    op.create_index("ix_recordings_status", "recordings", ["status"])
+
     op.create_table(
         "community_ratings",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -128,4 +145,5 @@ def downgrade() -> None:
     op.drop_table("governance_params")
     op.drop_table("expert_reviews")
     op.drop_table("community_ratings")
+    op.drop_table("recordings")
     op.drop_table("submissions")
