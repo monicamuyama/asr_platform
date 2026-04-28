@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from sqlalchemy import case
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from isdr_api.db_models_extended import Language, UserLanguagePreference
@@ -11,11 +11,15 @@ SECONDARY_LANGUAGE_REWARD = 8.0
 
 
 def normalize_language_code(language_code: str) -> str:
-    return language_code.strip().upper()
+    return language_code.strip().lower()
 
 
 def get_language_by_code(db: Session, language_code: str) -> Language | None:
-    return db.query(Language).filter(Language.iso_code == normalize_language_code(language_code)).first()
+    return (
+        db.query(Language)
+        .filter(func.lower(Language.iso_code) == normalize_language_code(language_code))
+        .first()
+    )
 
 
 def get_user_language_preference(

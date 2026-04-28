@@ -218,7 +218,7 @@ class Language(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     language_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    iso_code: Mapped[str] = mapped_column(String(3), unique=True, nullable=False, index=True)
+    iso_code: Mapped[str] = mapped_column(String(10), unique=True, nullable=False, index=True)
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id"), nullable=True)
 
     is_low_resource: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

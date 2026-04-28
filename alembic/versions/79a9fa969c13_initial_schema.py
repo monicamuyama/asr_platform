@@ -203,7 +203,7 @@ def upgrade() -> None:
     op.create_table('languages',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('language_name', sa.String(length=100), nullable=False),
-    sa.Column('iso_code', sa.String(length=3), nullable=False),
+    sa.Column('iso_code', sa.String(length=10), nullable=False),
     sa.Column('country_id', sa.String(length=36), nullable=True),
     sa.Column('is_low_resource', sa.Boolean(), nullable=False),
     sa.Column('speaker_count_approximate', sa.Integer(), nullable=True),

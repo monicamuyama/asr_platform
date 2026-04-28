@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from isdr_api.db_models_extended import Language, SentenceCorpus, SourceSentencePair, SourceTranslationTask
@@ -26,7 +27,7 @@ def _normalize_text(text: str) -> str:
 
 
 def _get_language_or_raise(db: Session, iso_code: str) -> Language:
-    language = db.query(Language).filter(Language.iso_code == iso_code.upper()).first()
+    language = db.query(Language).filter(func.lower(Language.iso_code) == iso_code.lower()).first()
     if language is None:
         raise ValueError(f"Language with ISO code '{iso_code}' was not found")
     return language
