@@ -4,11 +4,9 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# Keep legacy submission/governance models isolated from the extended schema metadata.
-# This avoids duplicate table registration for overlapping table names.
-Base = declarative_base()
+from .database import Base
 
 
 def _uuid() -> str:
@@ -62,15 +60,6 @@ class Submission(Base):
     community_ratings: Mapped[list[CommunityRating]] = relationship(
         "CommunityRating", back_populates="submission", cascade="all, delete-orphan"
     )
-    expert_reviews: Mapped[list[ExpertReview]] = relationship(
-        "ExpertReview", back_populates="submission", cascade="all, delete-orphan"
-    )
-    audit_events: Mapped[list[AuditEvent]] = relationship(
-        "AuditEvent", back_populates="submission", cascade="all, delete-orphan"
-    )
-    tips: Mapped[list[Tip]] = relationship(
-        "Tip", back_populates="submission", cascade="all, delete-orphan"
-    )
     contributor_translations: Mapped[list[ContributorTranslation]] = relationship(
         "ContributorTranslation", back_populates="submission", cascade="all, delete-orphan"
     )
@@ -97,27 +86,6 @@ class CommunityRating(Base):
     )
 
 
-class ExpertReview(Base):
-    __tablename__ = "expert_reviews"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    submission_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    expert_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    decision: Mapped[str] = mapped_column(String(20), nullable=False)
-    quality_tier: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    condition_annotation: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now
-    )
-
-    submission: Mapped[Submission] = relationship(
-        "Submission", back_populates="expert_reviews"
-    )
-
-
 class GovernanceParam(Base):
     __tablename__ = "governance_params"
 
@@ -132,50 +100,6 @@ class GovernanceParam(Base):
     active_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )
-
-
-class AuditEvent(Base):
-    __tablename__ = "audit_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    actor_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    action: Mapped[str] = mapped_column(String(100), nullable=False)
-    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now
-    )
-    submission_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("submissions.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
-    submission: Mapped[Submission | None] = relationship(
-        "Submission", back_populates="audit_events"
-    )
-
-
-class Tip(Base):
-    __tablename__ = "tips"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    submission_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    contributor_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    tipper_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    amount: Mapped[float] = mapped_column(Float, nullable=False)
-    rating: Mapped[int] = mapped_column(Integer, nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
-    message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now
-    )
-
-    submission: Mapped[Submission] = relationship("Submission", back_populates="tips")
 
 
 class UserAccount(Base):

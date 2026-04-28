@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 from alembic import context
 from isdr_api.database import DATABASE_URL, Base
 import isdr_api.db_models  # noqa: F401 — ensures models are registered on Base.metadata
+import isdr_api.db_models_extended  # noqa: F401 — ensures models are registered on Base.metadata
 
 config = context.config
 if config.config_file_name:
