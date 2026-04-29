@@ -58,31 +58,38 @@ from isdr_api.schemas_extended import (
 router = APIRouter(prefix="/transcription", tags=["transcription"])
 
 SOURCE_TRANSLATION_MIN_APPROVALS = 2
-IMAGE_PROMPT_SOURCE_PATH = Path(__file__).resolve().parents[3] / "data" / "recorded - image urls.csv"
 
 
-def _load_image_prompts() -> list[dict[str, object]]:
-    if not IMAGE_PROMPT_SOURCE_PATH.exists():
-        return []
+def _load_image_prompts(db: Session) -> list[dict[str, object]]:
+    prompts = (
+        db.query(SentenceCorpus)
+        .filter(
+            SentenceCorpus.source_type == "image_prompt",
+            SentenceCorpus.image_prompt_url.isnot(None),
+        )
+        .order_by(SentenceCorpus.created_at.desc())
+        .all()
+    )
 
-    prompts: list[dict[str, object]] = []
-    seen_urls: set[str] = set()
-    with IMAGE_PROMPT_SOURCE_PATH.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for index, row in enumerate(reader, start=1):
-            image_url = (row.get("image_url") or "").strip()
-            if not image_url or image_url in seen_urls:
-                continue
-            seen_urls.add(image_url)
-            prompts.append(
-                {
-                    "id": f"image-prompt-{index}",
-                    "image_url": image_url,
-                    "instruction_text": "Describe what you see in the image.",
-                    "is_active": True,
-                }
-            )
-    return prompts
+    image_prompts: list[dict[str, object]] = []
+    for prompt in prompts:
+        image_url = getattr(prompt, "image_prompt_url", None)
+        if not image_url and "|" in prompt.sentence_text:
+            _, image_url = prompt.sentence_text.split("|", 1)
+
+        if not image_url:
+            continue
+
+        image_prompts.append(
+            {
+                "id": prompt.id,
+                "image_url": image_url,
+                "instruction_text": prompt.sentence_text.split("|", 1)[0],
+                "is_active": True,
+            }
+        )
+
+    return image_prompts
 
 
 def _get_recording_or_404(db: Session, recording_id: str) -> Recording:
@@ -480,8 +487,8 @@ def list_prompt_bank(
 
 
 @router.get("/image-prompts", response_model=list[ImagePromptSchema])
-def list_image_prompts() -> list[dict[str, object]]:
-    return _load_image_prompts()
+def list_image_prompts(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    return _load_image_prompts(db)
 
 
 @router.get("/translation-queue", response_model=list[TranslationQueueItemSchema])

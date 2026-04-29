@@ -218,7 +218,7 @@ class Language(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     language_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    iso_code: Mapped[str] = mapped_column(String(10), unique=True, nullable=False, index=True)
+    iso_code: Mapped[str] = mapped_column(String(3), unique=True, nullable=False, index=True)
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id"), nullable=True)
 
     is_low_resource: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -270,7 +270,7 @@ class UserLanguagePreference(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
     user: Mapped[User] = relationship("User", back_populates="language_preferences")
-    language: Mapped[Language] = relationship("Language")
+    language: Mapped[Language | None] = relationship("Language")
     dialect: Mapped[Dialect | None] = relationship("Dialect")
 
 
@@ -283,12 +283,13 @@ class SentenceCorpus(Base):
     __tablename__ = "sentence_corpus"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    language_id: Mapped[str] = mapped_column(String(36), ForeignKey("languages.id"), nullable=False, index=True)
+    language_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("languages.id"), nullable=True, index=True)
     dialect_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("dialects.id"), nullable=True)
 
     sentence_text: Mapped[str] = mapped_column(Text, nullable=False)
     domain: Mapped[str] = mapped_column(String(50), nullable=False, default="casual")
     source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="community")
+    image_prompt_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)

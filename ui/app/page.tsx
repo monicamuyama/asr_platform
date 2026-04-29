@@ -7,6 +7,7 @@ import { useLanguage } from '@/components/language-provider'
 import { 
   Mic, Headphones, FileText, Trophy, Globe, Heart, BookOpen, Star
 } from 'lucide-react'
+import Image from "next/image";
 
 export default function HomePage() {
   const { strings } = useLanguage()
@@ -19,8 +20,14 @@ export default function HomePage() {
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-teal font-bold text-white">
-                CW
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl">
+                <Image
+                  src="/images/logo.png"
+                  alt="Corpus Weave logo"
+                  width={72}
+                  height={72}
+                  className="rounded-xl object-contain"
+                />
               </div>
               <div className="min-w-0">
                 <h1 className="truncate text-xl font-bold text-foreground sm:text-2xl">{strings.app.brand}</h1>
