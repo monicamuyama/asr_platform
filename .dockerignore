@@ -1,0 +1,9 @@
+ui/node_modules
+ui/.next
+.git
+**/__pycache__
+**/*.pyc
+.venv
+*.egg-info
+.env
+data/salt_archive
