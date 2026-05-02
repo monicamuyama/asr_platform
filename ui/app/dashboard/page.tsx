@@ -14,6 +14,7 @@ import { Mic, Headphones, FileText, Trophy, Play, Pause, Volume2, Star, LogOut, 
 import Link from 'next/link'
 import { RiddleLinkedRecorder } from '@/components/riddle-linked-recorder'
 import { useLanguage } from '@/components/language-provider'
+import { toast } from '@/hooks/use-toast'
 import { flushQueuedSubmissions, listQueuedSubmissions, queueSubmission } from '@/lib/offline-submission-queue'
 import {
   createCommunityRating,
@@ -123,6 +124,7 @@ export default function CorpusWeaveDashboard() {
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<number | null>(null)
+  const promptAdvanceTimerRef = useRef<number | null>(null)
 
   const refreshCommunityQueue = async (preferredSubmissionId?: string) => {
     try {
@@ -257,6 +259,14 @@ export default function CorpusWeaveDashboard() {
   }
 
   useEffect(() => {
+    return () => {
+      if (promptAdvanceTimerRef.current) {
+        window.clearTimeout(promptAdvanceTimerRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     const userId = getSessionUserId()
     if (!userId) {
       setIsLoading(false)
@@ -269,10 +279,7 @@ export default function CorpusWeaveDashboard() {
       setIsLoading(true)
       setError('')
 
-      const loadingGuard = window.setTimeout(() => {
-        setError('Dashboard is taking too long to load. Please confirm the API server is running, then refresh.')
-        setIsLoading(false)
-      }, 10000)
+      
 
       try {
         const [userData, profileData, walletData, languagePrefData, languageData, consentData] = await Promise.all([
@@ -336,7 +343,6 @@ export default function CorpusWeaveDashboard() {
         }
         setError(message)
       } finally {
-        window.clearTimeout(loadingGuard)
         setIsLoading(false)
       }
     }
@@ -656,6 +662,36 @@ export default function CorpusWeaveDashboard() {
     [ratingHistory.length, sessionUserId, submissions, wallet],
   )
 
+  const advanceToNextPrompt = () => {
+    if (selectedRecordingMode === 'read_sentence' && readSentenceCandidates.length > 1) {
+      const currentIndex = readSentenceCandidates.findIndex((entry) => entry.id === selectedPromptBankEntry?.id)
+      const nextIndex = currentIndex >= 0
+        ? (currentIndex + 1) % readSentenceCandidates.length
+        : 0
+      setSelectedPromptBankEntryId(readSentenceCandidates[nextIndex].id)
+      return
+    }
+
+    if (selectedRecordingMode === 'image' && imagePrompts.length > 1) {
+      const currentIndex = imagePrompts.findIndex((entry) => entry.id === selectedImagePrompt?.id)
+      const nextIndex = currentIndex >= 0
+        ? (currentIndex + 1) % imagePrompts.length
+        : 0
+      setSelectedImagePromptId(imagePrompts[nextIndex].id)
+    }
+  }
+
+  const scheduleNextPromptLoad = () => {
+    if (promptAdvanceTimerRef.current) {
+      window.clearTimeout(promptAdvanceTimerRef.current)
+    }
+
+    promptAdvanceTimerRef.current = window.setTimeout(() => {
+      advanceToNextPrompt()
+      promptAdvanceTimerRef.current = null
+    }, 1500)
+  }
+
   const activeTasks = useMemo(() => {
     return validationQueue
       .slice(0, 6)
@@ -883,12 +919,22 @@ export default function CorpusWeaveDashboard() {
     try {
       const submission = await createSubmission(payload)
 
-      setSubmissionMessage(`Recording submitted as ${submission.id}`)
-      await Promise.all([refreshCommunityQueue(submission.id), refreshSubmissions(), refreshRatingHistory(sessionUserId), refreshWallet(sessionUserId)])
+      toast({
+        title: 'Recording submitted! ✓',
+      })
+      setSubmissionMessage('')
+      setContributorTranscription('')
       stopRecording()
       setRecordedAudioUrl(null)
       setRecordedAudioDataUrl(null)
       setRecordingDuration(0)
+      await Promise.all([
+        refreshCommunityQueue(submission.id),
+        refreshSubmissions(),
+        refreshRatingHistory(sessionUserId),
+        refreshWallet(sessionUserId),
+      ])
+      scheduleNextPromptLoad()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to submit recording.'
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -984,13 +1030,17 @@ export default function CorpusWeaveDashboard() {
         challenge_submission_id: challengeSubmission.id,
       })
 
-      setSubmissionMessage(`Linked riddle pair submitted under group ${pairGroupId.slice(0, 8)}.`)
+      toast({
+        title: 'Recording submitted! ✓',
+      })
+      setSubmissionMessage('')
       await Promise.all([
         refreshCommunityQueue(challengeSubmission.id),
         refreshSubmissions(),
         refreshRatingHistory(sessionUserId),
         refreshWallet(sessionUserId),
       ])
+      scheduleNextPromptLoad()
     } catch (err) {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         await queueSubmission({
@@ -1208,7 +1258,6 @@ export default function CorpusWeaveDashboard() {
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
         <div className="text-center space-y-3">
           <p className="text-foreground font-medium">{dashboardCopy.loadingTitle}</p>
-          <p className="text-sm text-muted-foreground">{dashboardCopy.loadingDescription}</p>
           <Link href="/signin">
             <Button variant="outline" className="border-border">{dashboardCopy.goToSignIn}</Button>
           </Link>
@@ -1560,6 +1609,19 @@ export default function CorpusWeaveDashboard() {
                           />
                         </div>
                       )}
+                      {selectedRecordingMode === 'image' && (
+                        <div className="rounded-xl border border-border bg-background/90 p-4 text-left">
+                          <p className="text-base font-semibold text-foreground">
+                            Describe what you see in this image in {selectedTargetLanguageName}
+                          </p>
+                          <p className="mt-1 text-base text-muted-foreground">
+                            Mention objects, people, colors, actions and setting.
+                          </p>
+                          <p className="mt-1 text-base text-muted-foreground">
+                            Press record when ready, speak clearly.
+                          </p>
+                        </div>
+                      )}
                       {selectedRecordingMode === 'image' && imagePrompts.length > 1 && (
                         <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
                           <span>{imagePrompts.length} shared image(s) available</span>
@@ -1606,11 +1668,11 @@ export default function CorpusWeaveDashboard() {
 
                     {selectedRecordingMode === 'spontaneous' && selectedCategory !== 'riddle' && (
                       <div className="space-y-2">
-                        <Label htmlFor="spontaneous-topic" className="text-sm font-medium">What should the speaker talk about?</Label>
+                        <Label htmlFor="spontaneous-topic" className="text-base font-medium">What should the speaker talk about?</Label>
                         <Textarea
                           id="spontaneous-topic"
                           rows={2}
-                          className="border-border resize-none"
+                          className="border-border resize-none text-base"
                           value={spontaneousTopic}
                           onChange={(event) => setSpontaneousTopic(event.target.value)}
                           placeholder="Optional topic, e.g. introduce yourself, describe your day, tell a short story"
@@ -1619,11 +1681,11 @@ export default function CorpusWeaveDashboard() {
                     )}
 
                     <div className="space-y-2">
-                      <Label htmlFor="contributor-transcription" className="text-sm font-medium">What did you say? (required)</Label>
+                      <Label htmlFor="contributor-transcription" className="text-base font-medium">What did you say? (required)</Label>
                       <Textarea
                         id="contributor-transcription"
                         rows={3}
-                        className="border-border resize-none"
+                        className="border-border resize-none text-base"
                         value={contributorTranscription}
                         onChange={(event) => setContributorTranscription(event.target.value)}
                         placeholder="Type the words you recorded"
@@ -1638,7 +1700,6 @@ export default function CorpusWeaveDashboard() {
                     <Button
                       type="button"
                       onClick={isRecording ? stopRecording : startRecording}
-                      className={`w-full ${isRecording ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'}`}
                     >
                       {isRecording ? (
                         <>

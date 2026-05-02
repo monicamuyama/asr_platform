@@ -221,7 +221,7 @@ export function RiddleLinkedRecorder({ draftKey, disabled = false, promptText, o
       {linkedPrompt ? (
         <div className="rounded-lg border border-border bg-background/80 p-3">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{copy.promptLabel}</p>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{linkedPrompt}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-xl font-medium leading-relaxed text-foreground">{linkedPrompt}</p>
         </div>
       ) : null}
         <p className="text-sm text-muted-foreground">{statusText}</p>

@@ -138,7 +138,6 @@
   },
   "dashboard": {
     "loadingTitle": "Loading your dashboard...",
-    "loadingDescription": "If this takes too long, check that the API is running on port 8000.",
     "goToSignIn": "Go to Sign in",
     "welcome": "Welcome,",
     "support": "Support",
