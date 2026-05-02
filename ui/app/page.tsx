@@ -52,9 +52,84 @@ export default function HomePage() {
         </div>
       </header>
 
+      {/* Hero Section — full bleed, flush to navbar */}
+        <section className="relative -mt-[var(--navbar-height)] w-full overflow-hidden" style={{ height: "calc(100vh - 0px)" }}>
+
+          {/* SVG clip-path: wave on the RIGHT edge of the image */}
+          <svg width="0" height="0" className="absolute">
+            <defs>
+              <clipPath id="wavy-right-edge" clipPathUnits="objectBoundingBox">
+                <path d="
+                  M 0,0
+                  L 1.0,0
+                  C 0.98,0.15  0.78,0.3  0.88,0.5
+                  C 0.98,0.7   0.78,0.85 0.88,1
+                  L 0,1
+                  Z
+                " />
+              </clipPath>
+            </defs>
+          </svg>
+
+          <div className="flex h-full flex-col md:flex-row">
+
+            {/* LEFT: Image occupying ~55% with wavy right edge */}
+            <div
+              className="relative hidden md:block"
+              style={{ flex: "0 0 60%", clipPath: "url(#wavy-right-edge)" }}
+            >
+              <Image
+                src="/images/hero-photo.avif"
+                alt="Hero visual"
+                fill
+                className="object-cover"
+                priority
+              />
+            </div>
+
+            {/* RIGHT: Hero Content */}
+            <div className="relative z-10 flex flex-1 flex-col justify-center px-10 py-16 md:pl-16 md:pr-24">
+              <div className="space-y-6">
+                <h2 className="text-5xl font-bold tracking-tight text-foreground">
+                  {landing.hero.title}
+                </h2>
+                <p className="max-w-lg text-xl text-muted-foreground">
+                  {landing.hero.subtitle}
+                </p>
+                <div className="flex flex-wrap gap-4 pt-4">
+                  <Link href="/signup">
+                    <Button size="lg" className="bg-primary hover:bg-primary/90">
+                      {landing.hero.startContributing}
+                    </Button>
+                  </Link>
+                  <Link href="/data-dictionary">
+                    <Button size="lg" variant="outline" className="border-border gap-2">
+                      <BookOpen className="h-4 w-4" />
+                      {landing.hero.learnMore}
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+
+            {/* Mobile: stacked full-width image */}
+            <div className="relative block md:hidden w-full h-72 order-first ">
+              <Image
+                src="/images/hero-photo.avif"
+                alt="Hero visual"
+                fill
+                className="object-cover"
+                priority
+              />
+            </div>
+
+          </div>
+        </section>
+
       <main className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+        
         {/* Hero Section */}
-        <section className="mb-16">
+        {/* <section className="mb-16">
           <div className="space-y-6 text-center">
             <h2 className="text-5xl font-bold tracking-tight text-foreground">
               {landing.hero.title}
@@ -74,10 +149,10 @@ export default function HomePage() {
               </Link>
             </div>
           </div>
-        </section>
+        </section> */}
 
         {/* Impact Metrics */}
-        <section className="mb-16">
+        {/* <section className="mb-16">
           <div className="grid gap-6 md:grid-cols-4">
             <Card className="border-border">
               <CardContent className="p-6 text-center">
@@ -104,7 +179,7 @@ export default function HomePage() {
               </CardContent>
             </Card>
           </div>
-        </section>
+        </section> */}
 
         {/* How It Works */}
         <section className="mb-16">
